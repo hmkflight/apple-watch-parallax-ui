@@ -29,7 +29,7 @@
 
       // Configuration
       const NODE_RADIUS = 28;
-      const HEX_SPACING = 62;
+      const RING_SPACING = 70;
       const LINE_COLOR = 'rgba(80, 80, 80, 0.3)';
       const NODE_COLOR = '#1a1a1a';
       const NODE_STROKE = '#333';
@@ -40,7 +40,6 @@
 
       let nodes = [];
       let links = [];
-      let gridBounds = { minX: 0, maxX: 0, minY: 0, maxY: 0 };
 
       // Setup canvas with DPI scaling
       function setupCanvas() {
@@ -55,95 +54,101 @@
         return { width: rect.width, height: rect.height };
       }
 
-      // Generate honeycomb hex grid using axial coordinates
-      function generateHexGrid(viewportWidth, viewportHeight) {
+      // Generate concentric circular layout
+      function generateCircularGrid(viewportWidth, viewportHeight) {
         // Calculate how many rings needed to fill viewport
-        const maxDimension = Math.max(viewportWidth, viewportHeight);
-        const RING_COUNT = Math.ceil(maxDimension / (HEX_SPACING * Math.sqrt(3))) + 2;
+        const maxRadius = Math.sqrt(viewportWidth * viewportWidth + viewportHeight * viewportHeight) / 2;
+        const RING_COUNT = Math.ceil(maxRadius / RING_SPACING);
 
-        const positions = [];
-        const coordMap = new Map();
-
-        // Hex directions in axial coordinates (q, r)
-        const directions = [
-          [1, 0], [1, -1], [0, -1], [-1, 0], [-1, 1], [0, 1]
-        ];
+        nodes = [];
+        let nodeId = 0;
 
         // Center node
-        positions.push({ q: 0, r: 0 });
-        coordMap.set('0,0', 0);
+        nodes.push({
+          id: nodeId++,
+          x: 0,
+          y: 0,
+          ring: 0,
+          index: 0,
+          letter: LETTERS[0 % LETTERS.length]
+        });
 
         // Generate concentric rings
         for (let ring = 1; ring <= RING_COUNT; ring++) {
-          let q = 0;
-          let r = -ring;
+          const radius = ring * RING_SPACING;
+          const circumference = 2 * Math.PI * radius;
 
-          // Walk around the ring
-          for (let side = 0; side < 6; side++) {
-            for (let step = 0; step < ring; step++) {
-              const key = `${q},${r}`;
-              coordMap.set(key, positions.length);
-              positions.push({ q, r });
+          // Calculate how many nodes fit around this ring with proper spacing
+          const nodesInRing = Math.max(6, Math.floor(circumference / (NODE_RADIUS * 2.5)));
 
-              q += directions[side][0];
-              r += directions[side][1];
-            }
+          for (let i = 0; i < nodesInRing; i++) {
+            const angle = (i / nodesInRing) * 2 * Math.PI;
+            const x = radius * Math.cos(angle);
+            const y = radius * Math.sin(angle);
+
+            nodes.push({
+              id: nodeId++,
+              x,
+              y,
+              ring,
+              index: i,
+              nodesInRing,
+              letter: LETTERS[nodeId % LETTERS.length]
+            });
           }
         }
 
-        // Convert axial to pixel coordinates
-        const sqrt3 = Math.sqrt(3);
-        nodes = positions.map((pos, id) => {
-          const x = HEX_SPACING * sqrt3 * (pos.q + pos.r / 2);
-          const y = HEX_SPACING * (3 / 2) * pos.r;
-
-          // Assign placeholder letter deterministically
-          const letter = LETTERS[id % LETTERS.length];
-
-          return { id, x, y, q: pos.q, r: pos.r, letter };
-        });
-
-        // Compute bounding box
-        if (nodes.length > 0) {
-          gridBounds.minX = Math.min(...nodes.map(n => n.x));
-          gridBounds.maxX = Math.max(...nodes.map(n => n.x));
-          gridBounds.minY = Math.min(...nodes.map(n => n.y));
-          gridBounds.maxY = Math.max(...nodes.map(n => n.y));
-        }
-
-        // Generate neighbor-only links
+        // Generate neighbor links
         links = [];
-        nodes.forEach(node => {
-          directions.forEach(dir => {
-            const nq = node.q + dir[0];
-            const nr = node.r + dir[1];
-            const neighborKey = `${nq},${nr}`;
 
-            if (coordMap.has(neighborKey)) {
-              const neighborId = coordMap.get(neighborKey);
-              // Only add each link once (source < target to avoid duplicates)
-              if (node.id < neighborId) {
-                links.push({ source: node.id, target: neighborId });
+        nodes.forEach(node => {
+          if (node.ring === 0) return; // Skip center node for now
+
+          // Connect to adjacent nodes in same ring
+          const ringStart = nodes.findIndex(n => n.ring === node.ring);
+          const ringSize = node.nodesInRing;
+
+          // Next node in same ring
+          const nextIndex = (node.index + 1) % ringSize;
+          const nextId = ringStart + nextIndex;
+          if (node.id < nextId) {
+            links.push({ source: node.id, target: nextId });
+          }
+
+          // Connect to nodes in inner ring
+          if (node.ring > 1) {
+            const innerRingStart = nodes.findIndex(n => n.ring === node.ring - 1);
+            const innerRing = nodes.filter(n => n.ring === node.ring - 1);
+
+            // Find closest node(s) in inner ring by angle
+            const nodeAngle = Math.atan2(node.y, node.x);
+            innerRing.forEach(innerNode => {
+              const innerAngle = Math.atan2(innerNode.y, innerNode.x);
+              const angleDiff = Math.abs(nodeAngle - innerAngle);
+
+              // Connect if angles are close (within reasonable arc)
+              if (angleDiff < Math.PI / Math.max(6, innerNode.nodesInRing * 0.8)) {
+                if (node.id > innerNode.id) {
+                  links.push({ source: innerNode.id, target: node.id });
+                }
               }
-            }
-          });
+            });
+          } else if (node.ring === 1) {
+            // First ring connects to center
+            links.push({ source: 0, target: node.id });
+          }
         });
       }
 
-      // Render the honeycomb grid
+      // Render the circular grid
       function render() {
         const { width, height } = setupCanvas();
 
         ctx.clearRect(0, 0, width, height);
 
-        // Center the grid based on its bounding box
-        const gridCenterX = (gridBounds.minX + gridBounds.maxX) / 2;
-        const gridCenterY = (gridBounds.minY + gridBounds.maxY) / 2;
-        const offsetX = width / 2 - gridCenterX;
-        const offsetY = height / 2 - gridCenterY;
-
+        // Center the grid (already centered at 0,0)
         ctx.save();
-        ctx.translate(offsetX, offsetY);
+        ctx.translate(width / 2, height / 2);
 
         // Draw links first (behind nodes)
         ctx.strokeStyle = LINE_COLOR;
@@ -195,14 +200,14 @@
       // Initialize
       function init() {
         const rect = canvas.getBoundingClientRect();
-        generateHexGrid(rect.width, rect.height);
+        generateCircularGrid(rect.width, rect.height);
         render();
       }
 
       // Handle window resize
       window.addEventListener('resize', () => {
         const rect = canvas.getBoundingClientRect();
-        generateHexGrid(rect.width, rect.height);
+        generateCircularGrid(rect.width, rect.height);
         render();
       });
 
