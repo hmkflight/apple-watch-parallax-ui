@@ -62,10 +62,11 @@
       }));
     }
 
-    // Configuration
+    // Configuration - spacing derived from node size for uniform appearance
     const N = 300;
-    const nodeRadius = 18; // Larger circles
-    const hexSpacing = 46; // spacing between hex centers (radius*2 + gap)
+    const nodeRadius = 12; // Tuned for Apple Watch aesthetic
+    const gap = 10; // Gap between nodes
+    const hexSpacing = (nodeRadius * 2) + gap; // Consistent spacing = 34
 
     const positions = generateHexRings(N, hexSpacing);
 
@@ -85,13 +86,18 @@
           radius: nodeRadius
         };
       }),
-      links: [] // No links - pure icon field like Apple Watch
+      // Generate tree-like links to keep connectivity visible
+      links: [...Array(N).keys()]
+        .filter(id => id)
+        .map(id => ({
+          source: id,
+          target: Math.floor((id - 1) / 2) // Binary tree structure
+        }))
     };
 
-    // Custom anchor force to keep honeycomb shape (with clamped acceleration)
-    function anchorForce(strength = 0.008) {
+    // Custom anchor force to maintain honeycomb spacing (alpha-scaled)
+    function anchorForce(strength = 0.02) {
       let nodes;
-      const MAX_ACCEL = 0.5; // Clamp max acceleration per tick
 
       function force(alpha) {
         for (let i = 0; i < nodes.length; i++) {
@@ -105,13 +111,9 @@
           if (!Number.isFinite(node.vx)) node.vx = 0;
           if (!Number.isFinite(node.vy)) node.vy = 0;
 
-          // Calculate clamped acceleration toward anchor
-          const ax = (node.anchorX - node.x) * strength;
-          const ay = (node.anchorY - node.y) * strength;
-
-          // Clamp to prevent explosion
-          node.vx += Math.max(-MAX_ACCEL, Math.min(MAX_ACCEL, ax));
-          node.vy += Math.max(-MAX_ACCEL, Math.min(MAX_ACCEL, ay));
+          // Apply alpha-scaled anchor force
+          node.vx += (node.anchorX - node.x) * strength * alpha;
+          node.vy += (node.anchorY - node.y) * strength * alpha;
         }
       }
 
@@ -135,16 +137,26 @@
         .graphData(gData)
         .nodeVal(node => node.radius * 2) // Size based on radius
         .nodeRelSize(1.5) // Additional size multiplier
-        .d3VelocityDecay(0.6) // Higher friction for stability
+        .d3VelocityDecay(0.5) // Balanced friction for stability
         .d3AlphaDecay(0.08) // Moderate cooling rate
         .d3Force('charge', null) // Remove charge repulsion
         .d3Force('center', null) // Remove centering force (already centered)
-        .d3Force('collide', d3.forceCollide(node => node.radius + 4).iterations(2)) // Prevent overlap
-        .d3Force('anchor', anchorForce(0.008)) // Keep honeycomb shape
+        .d3Force('collide', d3.forceCollide(node => node.radius + gap / 2).iterations(3)) // Uniform spacing
+        .d3Force('anchor', anchorForce(0.02)) // Maintain honeycomb shape
         .onEngineStop(() => {
-          // Force refresh when simulation stops
-          Graph.refresh();
+          // Prevent permanent stop - reheat and refresh
+          const gd = Graph.graphData();
+          if (gd?.nodes?.length) {
+            Graph.d3ReheatSimulation();
+            Graph.refresh();
+          }
         });
+
+    // Configure link force after graphData to keep links gentle
+    const linkForce = Graph.d3Force('link');
+    if (linkForce) {
+      linkForce.distance(hexSpacing).strength(0.05); // Gentle links, spacing-matching distance
+    }
 
     // Apply initial size
     updateGraphSize();
@@ -170,13 +182,27 @@
       `;
     }, 1000);
 
-    // Watchdog: force refresh if nodes exist but seem invisible
+    // Safety net: periodic check and refresh (every 2 seconds)
     setInterval(() => {
-      const nodes = Graph.graphData().nodes;
-      if (nodes.length > 0) {
-        Graph.refresh();
+      const gd = Graph.graphData();
+      if (!gd?.nodes?.length) return;
+
+      // Check if positions are valid
+      const anyFinite = gd.nodes.some(n => Number.isFinite(n.x) && Number.isFinite(n.y));
+      if (!anyFinite) {
+        // Reset to anchors if positions became invalid
+        gd.nodes.forEach(n => {
+          n.x = n.anchorX || 0;
+          n.y = n.anchorY || 0;
+          n.vx = 0;
+          n.vy = 0;
+        });
+        Graph.d3ReheatSimulation();
       }
-    }, 5000);
+
+      // Always refresh to prevent disappearance
+      Graph.refresh();
+    }, 2000);
 
     // Calm the simulation on load
     setTimeout(() => {
