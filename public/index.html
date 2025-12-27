@@ -4,7 +4,10 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>Apple Watch Parallax UI</title>
-  <style> body { margin: 0; } </style>
+  <style>
+    html, body { margin: 0; height: 100%; overflow: hidden; }
+    #graph { width: 100vw; height: 100vh; }
+  </style>
 
   <script src="//cdn.jsdelivr.net/npm/force-graph"></script>
   <script src="//unpkg.com/d3-force@3"></script>
@@ -84,6 +87,12 @@
       function force(alpha) {
         for (let i = 0; i < nodes.length; i++) {
           const node = nodes[i];
+          // Defensive guards against NaN/undefined
+          if (!Number.isFinite(node.x)) node.x = node.anchorX || 0;
+          if (!Number.isFinite(node.y)) node.y = node.anchorY || 0;
+          if (!Number.isFinite(node.vx)) node.vx = 0;
+          if (!Number.isFinite(node.vy)) node.vy = 0;
+
           if (node.anchorX !== undefined && node.anchorY !== undefined) {
             node.vx += (node.anchorX - node.x) * strength;
             node.vy += (node.anchorY - node.y) * strength;
@@ -98,6 +107,8 @@
 
     const Graph = new ForceGraph()
       (document.getElementById('graph'))
+        .width(window.innerWidth)
+        .height(window.innerHeight)
         .graphData(gData)
         .nodeVal(node => node.radius * 2) // Size based on radius
         .nodeRelSize(1.5) // Additional size multiplier
@@ -107,6 +118,11 @@
         .d3Force('center', null) // Remove centering force (already centered)
         .d3Force('collide', d3.forceCollide(node => node.radius + 4).iterations(2)) // Prevent overlap
         .d3Force('anchor', anchorForce(0.008)); // Keep honeycomb shape
+
+    // Handle window resize
+    window.addEventListener('resize', () => {
+      Graph.width(window.innerWidth).height(window.innerHeight);
+    });
 
     // Calm the simulation on load
     setTimeout(() => {
