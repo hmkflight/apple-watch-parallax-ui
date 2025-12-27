@@ -6,18 +6,15 @@
   <title>Apple Watch Parallax UI</title>
   <style>
     * { margin: 0; padding: 0; box-sizing: border-box; }
-    html, body { width: 100%; height: 100%; overflow: hidden; }
-    body { background: #000; }
-    #canvas { display: block; width: 100%; height: 100%; cursor: grab; }
-    #canvas:active { cursor: grabbing; }
+    html, body { width: 100%; height: 100%; overflow: hidden; background: #000; }
+    #canvas { position: fixed; inset: 0; width: 100vw; height: 100vh; display: block; }
     #debug {
       position: fixed; top: 10px; left: 10px;
-      background: rgba(0,0,0,0.7); color: #0f0;
-      padding: 8px; font-family: monospace; font-size: 11px;
-      z-index: 1000; pointer-events: none;
+      background: rgba(0,0,0,0.8); color: #0f0;
+      padding: 8px; font-family: monospace; font-size: 10px;
+      pointer-events: none; z-index: 1000;
     }
   </style>
-
   <script src="https://unpkg.com/d3@7/dist/d3.min.js"></script>
 </head>
 
@@ -29,236 +26,252 @@
     // ========================================
     // CONFIGURATION
     // ========================================
-    const N = 300;              // Number of nodes
-    const nodeRadius = 12;      // Circle radius
-    const gap = 10;             // Gap between nodes
-    const hexSpacing = (nodeRadius * 2) + gap; // 34px between centers
+    const N = 220;              // Number of nodes
+    const radius = 6;           // Circle radius
+    const gap = 10;             // Gap between circles
+    const spacing = radius * 2 + gap; // 22px hex spacing
 
     // ========================================
-    // HONEYCOMB GENERATION (DETERMINISTIC)
+    // HEX RING GENERATION (DETERMINISTIC)
     // ========================================
-    // Generates nodes in concentric hex rings around (0,0)
-    // Returns array of {q, r, x, y} positions in axial coordinates
-    function generateHexRings(N, spacing) {
-      const positions = [];
-      const sqrt3 = Math.sqrt(3);
-
-      // Axial hex directions (6 sides)
+    function hexRingCoords(N) {
+      const coords = [];
       const dirs = [
-        [+1,  0], [+1, -1], [ 0, -1],
-        [-1,  0], [-1, +1], [ 0, +1]
+        [1, 0], [1, -1], [0, -1],
+        [-1, 0], [-1, 1], [0, 1]
       ];
 
       // Center
-      positions.push({ q: 0, r: 0 });
+      coords.push({ q: 0, r: 0 });
 
-      // Generate concentric rings
-      let radius = 1;
-      while (positions.length < N) {
-        let q = -radius;
+      // Concentric rings
+      let ring = 1;
+      while (coords.length < N) {
+        let q = -ring;
         let r = 0;
 
         for (let side = 0; side < 6; side++) {
-          for (let step = 0; step < radius; step++) {
-            if (positions.length >= N) break;
-            positions.push({ q, r });
+          for (let step = 0; step < ring; step++) {
+            if (coords.length >= N) break;
+            coords.push({ q, r });
             q += dirs[side][0];
             r += dirs[side][1];
           }
-          if (positions.length >= N) break;
+          if (coords.length >= N) break;
         }
-        radius++;
+        ring++;
       }
 
-      // Convert axial (q,r) to pixel (x,y) - pointy-top hex
-      return positions.map(({ q, r }) => ({
-        q,
-        r,
+      return coords;
+    }
+
+    // Convert axial (q,r) to pixel (x,y) - pointy-top hex
+    function axialToPixel(q, r, spacing) {
+      const sqrt3 = Math.sqrt(3);
+      return {
         x: spacing * sqrt3 * (q + r / 2),
-        y: spacing * 1.5 * r
-      }));
+        y: spacing * (3 / 2) * r
+      };
     }
 
     // ========================================
-    // BUILD HEX NEIGHBOR LINKS (OPTIONAL)
+    // CREATE NODES
     // ========================================
-    // Creates links only between immediate hex neighbors (max 6 per node)
-    function buildHexNeighborLinks(nodes) {
-      const links = [];
-      const neighborDirs = [
-        [+1,  0], [+1, -1], [ 0, -1],
-        [-1,  0], [-1, +1], [ 0, +1]
-      ];
+    const hexCoords = hexRingCoords(N);
+    const nodes = hexCoords.map((coord, i) => {
+      const { x, y } = axialToPixel(coord.q, coord.r, spacing);
+      return {
+        id: i,
+        q: coord.q,
+        r: coord.r,
+        x: x,
+        y: y,
+        vx: 0,
+        vy: 0,
+        anchorX: x,
+        anchorY: y,
+        radius: radius
+      };
+    });
 
-      // Map: "q,r" -> node
-      const coordMap = new Map();
-      nodes.forEach(node => {
-        coordMap.set(`${node.q},${node.r}`, node);
+    // ========================================
+    // BUILD NEIGHBOR LINKS (SHORT EDGES ONLY)
+    // ========================================
+    const coordMap = new Map();
+    nodes.forEach(node => {
+      coordMap.set(`${node.q},${node.r}`, node.id);
+    });
+
+    const neighborDirs = [
+      [1, 0], [1, -1], [0, -1],
+      [-1, 0], [-1, 1], [0, 1]
+    ];
+
+    const links = [];
+    nodes.forEach(node => {
+      neighborDirs.forEach(([dq, dr]) => {
+        const neighborId = coordMap.get(`${node.q + dq},${node.r + dr}`);
+        if (neighborId !== undefined && node.id < neighborId) {
+          links.push({ source: node.id, target: neighborId });
+        }
       });
-
-      // For each node, check 6 neighbors
-      nodes.forEach(node => {
-        neighborDirs.forEach(([dq, dr]) => {
-          const neighborKey = `${node.q + dq},${node.r + dr}`;
-          const neighbor = coordMap.get(neighborKey);
-
-          // Add link if neighbor exists (avoid duplicates)
-          if (neighbor && node.id < neighbor.id) {
-            links.push({ source: node, target: neighbor });
-          }
-        });
-      });
-
-      return links;
-    }
+    });
 
     // ========================================
-    // CREATE NODES & LINKS
+    // COMPUTE WORLD BOUNDS
     // ========================================
-    const positions = generateHexRings(N, hexSpacing);
-    const nodes = positions.map((pos, i) => ({
-      id: i,
-      q: pos.q,
-      r: pos.r,
-      x: pos.x,
-      y: pos.y,
-      anchorX: pos.x,  // Home position
-      anchorY: pos.y,
-      vx: 0,
-      vy: 0,
-      radius: nodeRadius
-    }));
+    let minX = Infinity, maxX = -Infinity;
+    let minY = Infinity, maxY = -Infinity;
+    nodes.forEach(n => {
+      if (n.anchorX < minX) minX = n.anchorX;
+      if (n.anchorX > maxX) maxX = n.anchorX;
+      if (n.anchorY < minY) minY = n.anchorY;
+      if (n.anchorY > maxY) maxY = n.anchorY;
+    });
 
-    const links = buildHexNeighborLinks(nodes);
+    const WORLD_W = (maxX - minX) + spacing * 2;
+    const WORLD_H = (maxY - minY) + spacing * 2;
 
     // ========================================
-    // D3-FORCE SIMULATION
+    // D3-FORCE SIMULATION (STRONG ANCHORS)
     // ========================================
-    // Keeps honeycomb stable with subtle motion
     const simulation = d3.forceSimulation(nodes)
-      .force('collide', d3.forceCollide(d => d.radius + gap / 2).iterations(3))
-      .force('charge', d3.forceManyBody().strength(-15))
-      .force('link', d3.forceLink(links).distance(hexSpacing).strength(0.1))
-      .force('anchor', () => {
-        // Custom anchor force: pulls nodes gently back to home positions
-        const strength = 0.02;
-        const alpha = simulation.alpha();
-        nodes.forEach(node => {
-          if (!Number.isFinite(node.x)) node.x = node.anchorX;
-          if (!Number.isFinite(node.y)) node.y = node.anchorY;
-          if (!Number.isFinite(node.vx)) node.vx = 0;
-          if (!Number.isFinite(node.vy)) node.vy = 0;
-
-          node.vx += (node.anchorX - node.x) * strength * alpha;
-          node.vy += (node.anchorY - node.y) * strength * alpha;
-        });
-      })
-      .alphaDecay(0.05)
-      .velocityDecay(0.5);
+      .force("collide", d3.forceCollide(n => n.radius + gap / 2).iterations(2))
+      .force("x", d3.forceX(n => n.anchorX).strength(0.35))
+      .force("y", d3.forceY(n => n.anchorY).strength(0.35))
+      .force("charge", d3.forceManyBody().strength(-2))
+      .velocityDecay(0.6)
+      .alpha(1)
+      .alphaDecay(0.12);
 
     // ========================================
-    // CANVAS SETUP
+    // CANVAS SETUP (DPI SAFE)
     // ========================================
     const canvas = document.getElementById('canvas');
     const ctx = canvas.getContext('2d');
-    let width = canvas.width = window.innerWidth;
-    let height = canvas.height = window.innerHeight;
+    const dpr = window.devicePixelRatio || 1;
 
-    // Handle window resize
-    window.addEventListener('resize', () => {
-      width = canvas.width = window.innerWidth;
-      height = canvas.height = window.innerHeight;
-    });
+    function resizeCanvas() {
+      const rect = canvas.getBoundingClientRect();
+      canvas.width = rect.width * dpr;
+      canvas.height = rect.height * dpr;
+      ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+    }
+
+    resizeCanvas();
+    window.addEventListener('resize', resizeCanvas);
 
     // ========================================
-    // CAMERA SYSTEM (PAN/ZOOM)
+    // CAMERA (INFINITE WRAPAROUND)
     // ========================================
-    let camera = {
-      x: 0,         // Camera offset X
-      y: 0,         // Camera offset Y
-      zoom: 1,      // Zoom level
-      targetZoom: 1 // Smooth zoom target
-    };
+    let camX = 0;
+    let camY = 0;
+    let targetCamX = 0;
+    let targetCamY = 0;
 
-    // Mouse interaction state
+    // Scroll handler (infinite wrap)
+    window.addEventListener('wheel', (e) => {
+      e.preventDefault();
+      const scrollSpeed = 0.8;
+      targetCamX += e.deltaX * scrollSpeed;
+      targetCamY += e.deltaY * scrollSpeed;
+    }, { passive: false });
+
+    // Mouse drag (optional)
     let isDragging = false;
-    let dragStart = { x: 0, y: 0 };
-    let cameraStart = { x: 0, y: 0 };
+    let dragStartX = 0, dragStartY = 0;
+    let camStartX = 0, camStartY = 0;
 
-    // Mouse down: start drag
     canvas.addEventListener('mousedown', (e) => {
       isDragging = true;
-      dragStart = { x: e.clientX, y: e.clientY };
-      cameraStart = { x: camera.x, y: camera.y };
+      dragStartX = e.clientX;
+      dragStartY = e.clientY;
+      camStartX = targetCamX;
+      camStartY = targetCamY;
     });
 
-    // Mouse move: pan camera
     canvas.addEventListener('mousemove', (e) => {
       if (isDragging) {
-        const dx = e.clientX - dragStart.x;
-        const dy = e.clientY - dragStart.y;
-        camera.x = cameraStart.x + dx;
-        camera.y = cameraStart.y + dy;
+        targetCamX = camStartX - (e.clientX - dragStartX);
+        targetCamY = camStartY - (e.clientY - dragStartY);
       }
     });
 
-    // Mouse up: stop drag
-    canvas.addEventListener('mouseup', () => {
-      isDragging = false;
-    });
-
-    canvas.addEventListener('mouseleave', () => {
-      isDragging = false;
-    });
-
-    // Mouse wheel: zoom
-    canvas.addEventListener('wheel', (e) => {
-      e.preventDefault();
-      const zoomSpeed = 0.001;
-      camera.targetZoom *= (1 - e.deltaY * zoomSpeed);
-      camera.targetZoom = Math.max(0.5, Math.min(3, camera.targetZoom));
-    }, { passive: false });
+    canvas.addEventListener('mouseup', () => { isDragging = false; });
+    canvas.addEventListener('mouseleave', () => { isDragging = false; });
 
     // ========================================
-    // RENDERING LOOP
+    // TILED RENDERING (9 TILES FOR SEAMLESS WRAP)
     // ========================================
     function render() {
-      // Smooth zoom
-      camera.zoom += (camera.targetZoom - camera.zoom) * 0.1;
+      // Smooth camera easing
+      camX += (targetCamX - camX) * 0.08;
+      camY += (targetCamY - camY) * 0.08;
+
+      // Wrap camera position (toroidal)
+      camX = ((camX % WORLD_W) + WORLD_W) % WORLD_W;
+      camY = ((camY % WORLD_H) + WORLD_H) % WORLD_H;
+
+      // Also wrap targets to prevent drift
+      targetCamX = ((targetCamX % WORLD_W) + WORLD_W) % WORLD_W;
+      targetCamY = ((targetCamY % WORLD_H) + WORLD_H) % WORLD_H;
 
       // Clear canvas
+      const w = canvas.width / dpr;
+      const h = canvas.height / dpr;
       ctx.fillStyle = '#000';
-      ctx.fillRect(0, 0, width, height);
+      ctx.fillRect(0, 0, w, h);
 
-      // Apply camera transform
-      ctx.save();
-      ctx.translate(width / 2 + camera.x, height / 2 + camera.y);
-      ctx.scale(camera.zoom, camera.zoom);
+      const centerX = w / 2;
+      const centerY = h / 2;
 
-      // Draw links (thin gray lines)
-      ctx.strokeStyle = 'rgba(255, 255, 255, 0.15)';
-      ctx.lineWidth = 1 / camera.zoom;
-      ctx.beginPath();
-      links.forEach(link => {
-        ctx.moveTo(link.source.x, link.source.y);
-        ctx.lineTo(link.target.x, link.target.y);
-      });
-      ctx.stroke();
+      // Draw 9 tiles (3x3 grid) for seamless wraparound
+      const offsets = [
+        [-WORLD_W, -WORLD_H], [0, -WORLD_H], [WORLD_W, -WORLD_H],
+        [-WORLD_W, 0],        [0, 0],        [WORLD_W, 0],
+        [-WORLD_W, WORLD_H],  [0, WORLD_H],  [WORLD_W, WORLD_H]
+      ];
 
-      // Draw nodes (white circles)
-      nodes.forEach(node => {
+      offsets.forEach(([ox, oy]) => {
+        // Draw links first
+        ctx.strokeStyle = 'rgba(255, 255, 255, 0.15)';
+        ctx.lineWidth = 0.5;
         ctx.beginPath();
-        ctx.arc(node.x, node.y, node.radius, 0, 2 * Math.PI);
-        ctx.fillStyle = '#fff';
-        ctx.fill();
-        ctx.strokeStyle = 'rgba(0, 0, 0, 0.2)';
-        ctx.lineWidth = 2 / camera.zoom;
+        links.forEach(link => {
+          const source = nodes[link.source];
+          const target = nodes[link.target];
+          const sx = (source.x - camX) + ox + centerX;
+          const sy = (source.y - camY) + oy + centerY;
+          const tx = (target.x - camX) + ox + centerX;
+          const ty = (target.y - camY) + oy + centerY;
+          ctx.moveTo(sx, sy);
+          ctx.lineTo(tx, ty);
+        });
         ctx.stroke();
+
+        // Draw nodes
+        nodes.forEach(node => {
+          const screenX = (node.x - camX) + ox + centerX;
+          const screenY = (node.y - camY) + oy + centerY;
+
+          ctx.beginPath();
+          ctx.arc(screenX, screenY, node.radius, 0, 2 * Math.PI);
+          ctx.fillStyle = '#fff';
+          ctx.fill();
+          ctx.strokeStyle = 'rgba(0, 0, 0, 0.3)';
+          ctx.lineWidth = 1;
+          ctx.stroke();
+        });
       });
+    }
 
-      ctx.restore();
-
-      requestAnimationFrame(render);
+    // ========================================
+    // ANIMATION LOOP
+    // ========================================
+    function animate() {
+      simulation.tick();
+      render();
+      requestAnimationFrame(animate);
     }
 
     // ========================================
@@ -267,18 +280,18 @@
     const debugEl = document.getElementById('debug');
     setInterval(() => {
       debugEl.innerHTML = `
-        Canvas: ${width}×${height}px<br>
-        Zoom: ${camera.zoom.toFixed(2)}<br>
         Nodes: ${nodes.length}<br>
         Links: ${links.length}<br>
+        World: ${Math.round(WORLD_W)}×${Math.round(WORLD_H)}<br>
+        Cam: ${Math.round(camX)}, ${Math.round(camY)}<br>
         Alpha: ${simulation.alpha().toFixed(3)}
       `;
-    }, 1000);
+    }, 100);
 
     // ========================================
     // START
     // ========================================
-    render();
+    animate();
   </script>
 </body>
 </html>
