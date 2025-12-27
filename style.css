@@ -1,0 +1,45 @@
+/**
+ * Global styles for Apple Watch Parallax UI
+ */
+
+* {
+  margin: 0;
+  padding: 0;
+  box-sizing: border-box;
+}
+
+html, body {
+  width: 100%;
+  height: 100%;
+  overflow: hidden;
+  background: #000;
+  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+}
+
+#canvas {
+  position: fixed;
+  inset: 0;
+  width: 100vw;
+  height: 100vh;
+  display: block;
+  touch-action: none; /* Prevent default touch behaviors */
+}
+
+/* Debug info (optional) */
+.debug {
+  position: fixed;
+  top: 10px;
+  left: 10px;
+  background: rgba(0, 0, 0, 0.8);
+  color: #0f0;
+  padding: 8px 12px;
+  font-family: 'Monaco', 'Courier New', monospace;
+  font-size: 11px;
+  pointer-events: none;
+  z-index: 1000;
+  border-radius: 4px;
+}
+
+.debug.hidden {
+  display: none;
+}
