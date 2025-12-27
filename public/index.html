@@ -3,12 +3,192 @@
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
-    <title>Blank</title>
+    <title>Apple Watch Parallax</title>
     <style>
-      html, body { margin:0; padding:0; width:100%; height:100%; background:#000; overflow:hidden; }
+      html, body {
+        margin: 0;
+        padding: 0;
+        width: 100%;
+        height: 100%;
+        background: #000;
+        overflow: hidden;
+      }
+      canvas {
+        display: block;
+        width: 100%;
+        height: 100%;
+      }
     </style>
   </head>
   <body>
-    <!-- blank screen ready for edits -->
+    <canvas id="canvas"></canvas>
+
+    <script>
+      const canvas = document.getElementById('canvas');
+      const ctx = canvas.getContext('2d');
+
+      // Configuration
+      const NODE_RADIUS = 28;
+      const HEX_SPACING = 80;
+      const RING_COUNT = 7;
+      const LINE_COLOR = 'rgba(80, 80, 80, 0.3)';
+      const NODE_COLOR = '#1a1a1a';
+      const NODE_STROKE = '#333';
+      const TEXT_COLOR = '#fff';
+
+      // Placeholder letters for icons
+      const LETTERS = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789';
+
+      let nodes = [];
+      let links = [];
+
+      // Setup canvas with DPI scaling
+      function setupCanvas() {
+        const dpr = window.devicePixelRatio || 1;
+        const rect = canvas.getBoundingClientRect();
+
+        canvas.width = rect.width * dpr;
+        canvas.height = rect.height * dpr;
+
+        ctx.scale(dpr, dpr);
+
+        return { width: rect.width, height: rect.height };
+      }
+
+      // Generate honeycomb hex grid using axial coordinates
+      function generateHexGrid() {
+        const positions = [];
+        const coordMap = new Map();
+
+        // Hex directions in axial coordinates (q, r)
+        const directions = [
+          [1, 0], [1, -1], [0, -1], [-1, 0], [-1, 1], [0, 1]
+        ];
+
+        // Center node
+        positions.push({ q: 0, r: 0 });
+        coordMap.set('0,0', 0);
+
+        // Generate concentric rings
+        for (let ring = 1; ring <= RING_COUNT; ring++) {
+          let q = 0;
+          let r = -ring;
+
+          // Walk around the ring
+          for (let side = 0; side < 6; side++) {
+            for (let step = 0; step < ring; step++) {
+              const key = `${q},${r}`;
+              coordMap.set(key, positions.length);
+              positions.push({ q, r });
+
+              q += directions[side][0];
+              r += directions[side][1];
+            }
+          }
+        }
+
+        // Convert axial to pixel coordinates
+        const sqrt3 = Math.sqrt(3);
+        nodes = positions.map((pos, id) => {
+          const x = HEX_SPACING * sqrt3 * (pos.q + pos.r / 2);
+          const y = HEX_SPACING * (3 / 2) * pos.r;
+
+          // Assign placeholder letter deterministically
+          const letter = LETTERS[id % LETTERS.length];
+
+          return { id, x, y, q: pos.q, r: pos.r, letter };
+        });
+
+        // Generate neighbor-only links
+        links = [];
+        nodes.forEach(node => {
+          directions.forEach(dir => {
+            const nq = node.q + dir[0];
+            const nr = node.r + dir[1];
+            const neighborKey = `${nq},${nr}`;
+
+            if (coordMap.has(neighborKey)) {
+              const neighborId = coordMap.get(neighborKey);
+              // Only add each link once (source < target to avoid duplicates)
+              if (node.id < neighborId) {
+                links.push({ source: node.id, target: neighborId });
+              }
+            }
+          });
+        });
+      }
+
+      // Render the honeycomb grid
+      function render() {
+        const { width, height } = setupCanvas();
+
+        ctx.clearRect(0, 0, width, height);
+
+        // Center the grid
+        const centerX = width / 2;
+        const centerY = height / 2;
+
+        ctx.save();
+        ctx.translate(centerX, centerY);
+
+        // Draw links first (behind nodes)
+        ctx.strokeStyle = LINE_COLOR;
+        ctx.lineWidth = 1.5;
+
+        links.forEach(link => {
+          const source = nodes[link.source];
+          const target = nodes[link.target];
+
+          ctx.beginPath();
+          ctx.moveTo(source.x, source.y);
+          ctx.lineTo(target.x, target.y);
+          ctx.stroke();
+        });
+
+        // Draw nodes
+        nodes.forEach(node => {
+          // Circle background
+          ctx.fillStyle = NODE_COLOR;
+          ctx.strokeStyle = NODE_STROKE;
+          ctx.lineWidth = 2;
+
+          ctx.beginPath();
+          ctx.arc(node.x, node.y, NODE_RADIUS, 0, Math.PI * 2);
+          ctx.fill();
+          ctx.stroke();
+
+          // Subtle inner shadow effect
+          const gradient = ctx.createRadialGradient(
+            node.x, node.y - NODE_RADIUS * 0.3, 0,
+            node.x, node.y, NODE_RADIUS
+          );
+          gradient.addColorStop(0, 'rgba(255, 255, 255, 0.1)');
+          gradient.addColorStop(1, 'rgba(0, 0, 0, 0.3)');
+          ctx.fillStyle = gradient;
+          ctx.fill();
+
+          // Placeholder letter/logo
+          ctx.fillStyle = TEXT_COLOR;
+          ctx.font = 'bold 18px -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif';
+          ctx.textAlign = 'center';
+          ctx.textBaseline = 'middle';
+          ctx.fillText(node.letter, node.x, node.y);
+        });
+
+        ctx.restore();
+      }
+
+      // Initialize
+      function init() {
+        generateHexGrid();
+        render();
+      }
+
+      // Handle window resize
+      window.addEventListener('resize', render);
+
+      // Start
+      init();
+    </script>
   </body>
 </html>
