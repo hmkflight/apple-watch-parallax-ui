@@ -77,6 +77,15 @@
       let lastPinchMidX = 0;
       let lastPinchMidY = 0;
 
+      // Lens focus state (screen space)
+      let focusX = 0;
+      let focusY = 0;
+      let targetFocusX = 0;
+      let targetFocusY = 0;
+      const FOCUS_EASING = 0.2;
+      const LENS_RADIUS = 250;
+      const LENS_MAX_SCALE = 1.5;
+
       // Setup canvas with DPI scaling
       function setupCanvas() {
         const dpr = window.devicePixelRatio || 1;
@@ -270,31 +279,48 @@
             ctx.stroke();
           });
 
-          // Draw nodes
+          // Draw nodes with lens magnification
           nodes.forEach(node => {
+            // Calculate screen position of this node (considering all transforms)
+            const screenX = (node.x + offset.x) * zoom + camX + width / 2;
+            const screenY = (node.y + offset.y) * zoom + camY + height / 2;
+
+            // Calculate distance to focus point
+            const dx = screenX - focusX;
+            const dy = screenY - focusY;
+            const distance = Math.sqrt(dx * dx + dy * dy);
+
+            // Apply smooth falloff for lens magnification
+            const strength = Math.max(0, 1 - distance / LENS_RADIUS);
+            const lensScale = 1 + (LENS_MAX_SCALE - 1) * strength * strength;
+
+            // Apply magnification transform
+            const scaledRadius = NODE_RADIUS * lensScale;
+
             // Circle background
             ctx.fillStyle = NODE_COLOR;
             ctx.strokeStyle = NODE_STROKE;
             ctx.lineWidth = 2;
 
             ctx.beginPath();
-            ctx.arc(node.x, node.y, NODE_RADIUS, 0, Math.PI * 2);
+            ctx.arc(node.x, node.y, scaledRadius, 0, Math.PI * 2);
             ctx.fill();
             ctx.stroke();
 
             // Subtle inner shadow effect
             const gradient = ctx.createRadialGradient(
-              node.x, node.y - NODE_RADIUS * 0.3, 0,
-              node.x, node.y, NODE_RADIUS
+              node.x, node.y - scaledRadius * 0.3, 0,
+              node.x, node.y, scaledRadius
             );
             gradient.addColorStop(0, 'rgba(255, 255, 255, 0.1)');
             gradient.addColorStop(1, 'rgba(0, 0, 0, 0.3)');
             ctx.fillStyle = gradient;
             ctx.fill();
 
-            // Placeholder letter/logo
+            // Placeholder letter/logo (scale text size proportionally)
             ctx.fillStyle = TEXT_COLOR;
-            ctx.font = 'bold 18px -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif';
+            const scaledFontSize = Math.round(18 * lensScale);
+            ctx.font = `bold ${scaledFontSize}px -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif`;
             ctx.textAlign = 'center';
             ctx.textBaseline = 'middle';
             ctx.fillText(node.letter, node.x, node.y);
@@ -312,6 +338,10 @@
 
         // Smooth zoom easing
         zoom += (targetZoom - zoom) * ZOOM_EASING;
+
+        // Smooth focus easing (for lens effect)
+        focusX += (targetFocusX - focusX) * FOCUS_EASING;
+        focusY += (targetFocusY - focusY) * FOCUS_EASING;
 
         // Wrap camera for infinite torus world
         wrapCamera();
@@ -443,9 +473,23 @@
         }
       }, { passive: false });
 
+      // Mouse move handler for lens focus (desktop)
+      canvas.addEventListener('mousemove', (e) => {
+        const rect = canvas.getBoundingClientRect();
+        targetFocusX = e.clientX - rect.left;
+        targetFocusY = e.clientY - rect.top;
+      });
+
       // Initialize
       function init() {
         const rect = canvas.getBoundingClientRect();
+
+        // Set initial focus to screen center (for mobile and desktop default)
+        targetFocusX = rect.width / 2;
+        targetFocusY = rect.height / 2;
+        focusX = targetFocusX;
+        focusY = targetFocusY;
+
         generateCircularGrid(rect.width, rect.height);
         animate();
       }
