@@ -33,8 +33,8 @@
       const ctx = canvas.getContext('2d');
 
       // Configuration
-      const NODE_RADIUS = 28;
-      const RING_SPACING = 70;
+      const NODE_RADIUS = 42;
+      const RING_SPACING = 105;
       const LINE_COLOR = 'rgba(80, 80, 80, 0.3)';
       const NODE_COLOR = '#1a1a1a';
       const NODE_STROKE = '#333';
@@ -119,7 +119,7 @@
         const centerX = rect.width / 2;
         const centerY = rect.height / 2;
 
-        // World point before zoom (use wrapped camera values)
+        // World point before zoom (use continuous camera values)
         const worldXBefore = (screenX - centerX - targetCamX) / zoom;
         const worldYBefore = (screenY - centerY - targetCamY) / zoom;
 
@@ -132,8 +132,7 @@
         targetCamX = screenX - centerX - worldXBefore * targetZoom;
         targetCamY = screenY - centerY - worldYBefore * targetZoom;
 
-        // Wrap after zoom adjustment
-        wrapCamera();
+        // Camera remains continuous (no wrapping)
       }
 
       // Generate concentric circular layout
@@ -240,6 +239,10 @@
 
         ctx.clearRect(0, 0, width, height);
 
+        // Wrap camera for rendering only (portal-style continuous motion)
+        const camXWrapped = wrap(camX, WORLD_WIDTH);
+        const camYWrapped = wrap(camY, WORLD_HEIGHT);
+
         // Define 3x3 tile offsets for seamless torus wrapping
         const tileOffsets = [
           { x: -WORLD_WIDTH, y: -WORLD_HEIGHT },
@@ -257,9 +260,9 @@
         tileOffsets.forEach(offset => {
           ctx.save();
 
-          // Apply camera transform: translate to center, apply camera offset, then scale
+          // Apply camera transform: translate to center, apply wrapped camera offset, then scale
           ctx.translate(width / 2, height / 2);
-          ctx.translate(camX, camY);
+          ctx.translate(camXWrapped, camYWrapped);
           ctx.scale(zoom, zoom);
 
           // Apply tile offset
@@ -281,9 +284,9 @@
 
           // Draw nodes with lens magnification
           nodes.forEach(node => {
-            // Calculate screen position of this node (considering all transforms)
-            const screenX = (node.x + offset.x) * zoom + camX + width / 2;
-            const screenY = (node.y + offset.y) * zoom + camY + height / 2;
+            // Calculate screen position of this node (using wrapped camera for visuals)
+            const screenX = (node.x + offset.x) * zoom + camXWrapped + width / 2;
+            const screenY = (node.y + offset.y) * zoom + camYWrapped + height / 2;
 
             // Calculate distance to focus point
             const dx = screenX - focusX;
@@ -343,8 +346,7 @@
         focusX += (targetFocusX - focusX) * FOCUS_EASING;
         focusY += (targetFocusY - focusY) * FOCUS_EASING;
 
-        // Wrap camera for infinite torus world
-        wrapCamera();
+        // Camera remains continuous (wrapping only in render)
 
         render();
         requestAnimationFrame(animate);
@@ -408,7 +410,6 @@
 
           targetCamX = dragStartCamX + deltaX;
           targetCamY = dragStartCamY + deltaY;
-          wrapCamera();
         }
       });
 
@@ -469,7 +470,6 @@
           // Normal wheel: pan
           targetCamX -= e.deltaX;
           targetCamY -= e.deltaY;
-          wrapCamera();
         }
       }, { passive: false });
 
