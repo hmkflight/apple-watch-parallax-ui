@@ -14,22 +14,77 @@
   <div id="graph"></div>
 
   <script>
-    // Random tree
+    // Deterministic honeycomb position generator
+    function generateHexHoneycombPositions(N, spacing) {
+      const positions = [];
+      const sqrt3 = Math.sqrt(3);
+
+      // Generate rectangular hex grid centered at origin
+      const gridSize = Math.ceil(Math.sqrt(N));
+      let count = 0;
+
+      for (let row = -gridSize; row <= gridSize && count < N; row++) {
+        for (let col = -gridSize; col <= gridSize && count < N; col++) {
+          // Offset coordinates: even rows shift right by half spacing
+          const x = col * spacing * sqrt3 + (row % 2) * spacing * sqrt3 / 2;
+          const y = row * spacing * 1.5;
+          positions.push({ x, y });
+          count++;
+        }
+      }
+
+      // Center the grid at (0, 0)
+      if (positions.length > 0) {
+        const avgX = positions.reduce((sum, p) => sum + p.x, 0) / positions.length;
+        const avgY = positions.reduce((sum, p) => sum + p.y, 0) / positions.length;
+        positions.forEach(p => {
+          p.x -= avgX;
+          p.y -= avgY;
+        });
+      }
+
+      return positions;
+    }
+
+    // Generate deterministic data
     const N = 300;
+    const hexSpacing = 30; // Spacing between hexagons
+    const positions = generateHexHoneycombPositions(N, hexSpacing);
+
+    // Create nodes with deterministic positions
     const gData = {
-      nodes: [...Array(N).keys()].map(i => ({ id: i })),
+      nodes: [...Array(N).keys()].map(i => ({
+        id: i,
+        x: positions[i].x,
+        y: positions[i].y,
+        fx: positions[i].x, // Fix position initially
+        fy: positions[i].y
+      })),
       links: [...Array(N).keys()]
         .filter(id => id)
         .map(id => ({
           source: id,
-          target: Math.round(Math.random() * (id-1))
+          target: Math.floor((id - 1) / 2) // Deterministic binary tree structure
         }))
     };
 
     const Graph = new ForceGraph()
       (document.getElementById('graph'))
+        .graphData(gData)
+        .nodeVal(8) // Larger node value
+        .nodeRelSize(6) // Increase relative size multiplier
         .linkDirectionalParticles(2)
-        .graphData(gData);
+        .d3AlphaDecay(0.02) // Slower cooling for smoother settling
+        .d3VelocityDecay(0.3); // Higher friction to reduce initial scramble
+
+    // Release fixed positions after initial render to allow physics
+    setTimeout(() => {
+      gData.nodes.forEach(node => {
+        node.fx = undefined;
+        node.fy = undefined;
+      });
+      Graph.graphData(gData); // Update to apply changes
+    }, 800); // 800ms delay for stable initial view
   </script>
 </body>
 </html>
