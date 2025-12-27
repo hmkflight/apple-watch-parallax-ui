@@ -225,63 +225,83 @@
         }
       }
 
-      // Render the circular grid
+      // Render the circular grid with tiled rendering for seamless infinite world
       function render() {
         const { width, height } = setupCanvas();
 
         ctx.clearRect(0, 0, width, height);
 
-        // Apply camera transform: translate to center, apply camera offset, then scale
-        ctx.save();
-        ctx.translate(width / 2, height / 2);
-        ctx.translate(camX, camY);
-        ctx.scale(zoom, zoom);
+        // Define 3x3 tile offsets for seamless torus wrapping
+        const tileOffsets = [
+          { x: -WORLD_WIDTH, y: -WORLD_HEIGHT },
+          { x: -WORLD_WIDTH, y: 0 },
+          { x: -WORLD_WIDTH, y: WORLD_HEIGHT },
+          { x: 0, y: -WORLD_HEIGHT },
+          { x: 0, y: 0 },
+          { x: 0, y: WORLD_HEIGHT },
+          { x: WORLD_WIDTH, y: -WORLD_HEIGHT },
+          { x: WORLD_WIDTH, y: 0 },
+          { x: WORLD_WIDTH, y: WORLD_HEIGHT }
+        ];
 
-        // Draw links first (behind nodes)
-        ctx.strokeStyle = LINE_COLOR;
-        ctx.lineWidth = 1.5;
+        // Render each tile
+        tileOffsets.forEach(offset => {
+          ctx.save();
 
-        links.forEach(link => {
-          const source = nodes[link.source];
-          const target = nodes[link.target];
+          // Apply camera transform: translate to center, apply camera offset, then scale
+          ctx.translate(width / 2, height / 2);
+          ctx.translate(camX, camY);
+          ctx.scale(zoom, zoom);
 
-          ctx.beginPath();
-          ctx.moveTo(source.x, source.y);
-          ctx.lineTo(target.x, target.y);
-          ctx.stroke();
+          // Apply tile offset
+          ctx.translate(offset.x, offset.y);
+
+          // Draw links first (behind nodes)
+          ctx.strokeStyle = LINE_COLOR;
+          ctx.lineWidth = 1.5;
+
+          links.forEach(link => {
+            const source = nodes[link.source];
+            const target = nodes[link.target];
+
+            ctx.beginPath();
+            ctx.moveTo(source.x, source.y);
+            ctx.lineTo(target.x, target.y);
+            ctx.stroke();
+          });
+
+          // Draw nodes
+          nodes.forEach(node => {
+            // Circle background
+            ctx.fillStyle = NODE_COLOR;
+            ctx.strokeStyle = NODE_STROKE;
+            ctx.lineWidth = 2;
+
+            ctx.beginPath();
+            ctx.arc(node.x, node.y, NODE_RADIUS, 0, Math.PI * 2);
+            ctx.fill();
+            ctx.stroke();
+
+            // Subtle inner shadow effect
+            const gradient = ctx.createRadialGradient(
+              node.x, node.y - NODE_RADIUS * 0.3, 0,
+              node.x, node.y, NODE_RADIUS
+            );
+            gradient.addColorStop(0, 'rgba(255, 255, 255, 0.1)');
+            gradient.addColorStop(1, 'rgba(0, 0, 0, 0.3)');
+            ctx.fillStyle = gradient;
+            ctx.fill();
+
+            // Placeholder letter/logo
+            ctx.fillStyle = TEXT_COLOR;
+            ctx.font = 'bold 18px -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif';
+            ctx.textAlign = 'center';
+            ctx.textBaseline = 'middle';
+            ctx.fillText(node.letter, node.x, node.y);
+          });
+
+          ctx.restore();
         });
-
-        // Draw nodes
-        nodes.forEach(node => {
-          // Circle background
-          ctx.fillStyle = NODE_COLOR;
-          ctx.strokeStyle = NODE_STROKE;
-          ctx.lineWidth = 2;
-
-          ctx.beginPath();
-          ctx.arc(node.x, node.y, NODE_RADIUS, 0, Math.PI * 2);
-          ctx.fill();
-          ctx.stroke();
-
-          // Subtle inner shadow effect
-          const gradient = ctx.createRadialGradient(
-            node.x, node.y - NODE_RADIUS * 0.3, 0,
-            node.x, node.y, NODE_RADIUS
-          );
-          gradient.addColorStop(0, 'rgba(255, 255, 255, 0.1)');
-          gradient.addColorStop(1, 'rgba(0, 0, 0, 0.3)');
-          ctx.fillStyle = gradient;
-          ctx.fill();
-
-          // Placeholder letter/logo
-          ctx.fillStyle = TEXT_COLOR;
-          ctx.font = 'bold 18px -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif';
-          ctx.textAlign = 'center';
-          ctx.textBaseline = 'middle';
-          ctx.fillText(node.letter, node.x, node.y);
-        });
-
-        ctx.restore();
       }
 
       // Camera animation loop
