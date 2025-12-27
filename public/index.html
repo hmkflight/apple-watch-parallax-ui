@@ -46,6 +46,10 @@
       let nodes = [];
       let links = [];
 
+      // World bounds (for infinite wrap)
+      let WORLD_WIDTH = 2000;
+      let WORLD_HEIGHT = 2000;
+
       // Camera state
       let camX = 0;
       let camY = 0;
@@ -86,13 +90,27 @@
         return { width: rect.width, height: rect.height };
       }
 
+      // Wrap a value to stay within [-limit/2, +limit/2)
+      function wrap(value, limit) {
+        const halfLimit = limit / 2;
+        return ((value + halfLimit) % limit + limit) % limit - halfLimit;
+      }
+
+      // Wrap camera positions for infinite torus world
+      function wrapCamera() {
+        targetCamX = wrap(targetCamX, WORLD_WIDTH);
+        targetCamY = wrap(targetCamY, WORLD_HEIGHT);
+        camX = wrap(camX, WORLD_WIDTH);
+        camY = wrap(camY, WORLD_HEIGHT);
+      }
+
       // Anchored zoom: adjust camera so world point under screen point stays fixed
       function applyAnchoredZoom(newZoom, screenX, screenY) {
         const rect = canvas.getBoundingClientRect();
         const centerX = rect.width / 2;
         const centerY = rect.height / 2;
 
-        // World point before zoom
+        // World point before zoom (use wrapped camera values)
         const worldXBefore = (screenX - centerX - targetCamX) / zoom;
         const worldYBefore = (screenY - centerY - targetCamY) / zoom;
 
@@ -104,6 +122,9 @@
         // Solve for new targetCamX/Y
         targetCamX = screenX - centerX - worldXBefore * targetZoom;
         targetCamY = screenY - centerY - worldYBefore * targetZoom;
+
+        // Wrap after zoom adjustment
+        wrapCamera();
       }
 
       // Generate concentric circular layout
@@ -190,6 +211,18 @@
             links.push({ source: 0, target: node.id });
           }
         });
+
+        // Calculate world bounds from grid
+        if (nodes.length > 0) {
+          const padding = 200;
+          const minX = Math.min(...nodes.map(n => n.x));
+          const maxX = Math.max(...nodes.map(n => n.x));
+          const minY = Math.min(...nodes.map(n => n.y));
+          const maxY = Math.max(...nodes.map(n => n.y));
+
+          WORLD_WIDTH = (maxX - minX) + padding * 2;
+          WORLD_HEIGHT = (maxY - minY) + padding * 2;
+        }
       }
 
       // Render the circular grid
@@ -260,6 +293,9 @@
         // Smooth zoom easing
         zoom += (targetZoom - zoom) * ZOOM_EASING;
 
+        // Wrap camera for infinite torus world
+        wrapCamera();
+
         render();
         requestAnimationFrame(animate);
       }
@@ -322,6 +358,7 @@
 
           targetCamX = dragStartCamX + deltaX;
           targetCamY = dragStartCamY + deltaY;
+          wrapCamera();
         }
       });
 
@@ -382,6 +419,7 @@
           // Normal wheel: pan
           targetCamX -= e.deltaX;
           targetCamY -= e.deltaY;
+          wrapCamera();
         }
       }, { passive: false });
 
