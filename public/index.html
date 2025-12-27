@@ -53,12 +53,25 @@
       let targetCamY = 0;
       const CAM_EASING = 0.15;
 
+      // Zoom state
+      let zoom = 1;
+      let targetZoom = 1;
+      const MIN_ZOOM = 0.6;
+      const MAX_ZOOM = 2.5;
+      const ZOOM_EASING = 0.2;
+
       // Interaction state
       let isDragging = false;
       let dragStartX = 0;
       let dragStartY = 0;
       let dragStartCamX = 0;
       let dragStartCamY = 0;
+
+      // Pinch state
+      const activePointers = new Map();
+      let lastPinchDistance = 0;
+      let lastPinchMidX = 0;
+      let lastPinchMidY = 0;
 
       // Setup canvas with DPI scaling
       function setupCanvas() {
@@ -71,6 +84,26 @@
         ctx.scale(dpr, dpr);
 
         return { width: rect.width, height: rect.height };
+      }
+
+      // Anchored zoom: adjust camera so world point under screen point stays fixed
+      function applyAnchoredZoom(newZoom, screenX, screenY) {
+        const rect = canvas.getBoundingClientRect();
+        const centerX = rect.width / 2;
+        const centerY = rect.height / 2;
+
+        // World point before zoom
+        const worldXBefore = (screenX - centerX - targetCamX) / zoom;
+        const worldYBefore = (screenY - centerY - targetCamY) / zoom;
+
+        // Clamp zoom
+        targetZoom = Math.max(MIN_ZOOM, Math.min(MAX_ZOOM, newZoom));
+
+        // World point after zoom (should stay at same screen position)
+        // screenX = centerX + targetCamX + worldX * targetZoom
+        // Solve for new targetCamX/Y
+        targetCamX = screenX - centerX - worldXBefore * targetZoom;
+        targetCamY = screenY - centerY - worldYBefore * targetZoom;
       }
 
       // Generate concentric circular layout
@@ -165,9 +198,11 @@
 
         ctx.clearRect(0, 0, width, height);
 
-        // Apply camera transform
+        // Apply camera transform: translate to center, apply camera offset, then scale
         ctx.save();
-        ctx.translate(width / 2 + camX, height / 2 + camY);
+        ctx.translate(width / 2, height / 2);
+        ctx.translate(camX, camY);
+        ctx.scale(zoom, zoom);
 
         // Draw links first (behind nodes)
         ctx.strokeStyle = LINE_COLOR;
@@ -222,52 +257,132 @@
         camX += (targetCamX - camX) * CAM_EASING;
         camY += (targetCamY - camY) * CAM_EASING;
 
+        // Smooth zoom easing
+        zoom += (targetZoom - zoom) * ZOOM_EASING;
+
         render();
         requestAnimationFrame(animate);
       }
 
       // Pointer event handlers
       canvas.addEventListener('pointerdown', (e) => {
-        isDragging = true;
-        dragStartX = e.clientX;
-        dragStartY = e.clientY;
-        dragStartCamX = targetCamX;
-        dragStartCamY = targetCamY;
+        activePointers.set(e.pointerId, { x: e.clientX, y: e.clientY });
 
-        canvas.setPointerCapture(e.pointerId);
-        canvas.classList.add('dragging');
+        if (activePointers.size === 2) {
+          // Two fingers: start pinch zoom
+          isDragging = false;
+          canvas.classList.remove('dragging');
+
+          const pointers = Array.from(activePointers.values());
+          const dx = pointers[1].x - pointers[0].x;
+          const dy = pointers[1].y - pointers[0].y;
+          lastPinchDistance = Math.sqrt(dx * dx + dy * dy);
+          lastPinchMidX = (pointers[0].x + pointers[1].x) / 2;
+          lastPinchMidY = (pointers[0].y + pointers[1].y) / 2;
+        } else if (activePointers.size === 1) {
+          // One finger: start drag pan
+          isDragging = true;
+          dragStartX = e.clientX;
+          dragStartY = e.clientY;
+          dragStartCamX = targetCamX;
+          dragStartCamY = targetCamY;
+
+          canvas.setPointerCapture(e.pointerId);
+          canvas.classList.add('dragging');
+        }
       });
 
       canvas.addEventListener('pointermove', (e) => {
-        if (!isDragging) return;
+        if (!activePointers.has(e.pointerId)) return;
 
-        const deltaX = e.clientX - dragStartX;
-        const deltaY = e.clientY - dragStartY;
+        activePointers.set(e.pointerId, { x: e.clientX, y: e.clientY });
 
-        targetCamX = dragStartCamX + deltaX;
-        targetCamY = dragStartCamY + deltaY;
+        if (activePointers.size === 2) {
+          // Two fingers: pinch zoom
+          const pointers = Array.from(activePointers.values());
+          const dx = pointers[1].x - pointers[0].x;
+          const dy = pointers[1].y - pointers[0].y;
+          const distance = Math.sqrt(dx * dx + dy * dy);
+          const midX = (pointers[0].x + pointers[1].x) / 2;
+          const midY = (pointers[0].y + pointers[1].y) / 2;
+
+          if (lastPinchDistance > 0) {
+            const scale = distance / lastPinchDistance;
+            const newZoom = targetZoom * scale;
+            applyAnchoredZoom(newZoom, midX, midY);
+          }
+
+          lastPinchDistance = distance;
+          lastPinchMidX = midX;
+          lastPinchMidY = midY;
+        } else if (activePointers.size === 1 && isDragging) {
+          // One finger: drag pan
+          const deltaX = e.clientX - dragStartX;
+          const deltaY = e.clientY - dragStartY;
+
+          targetCamX = dragStartCamX + deltaX;
+          targetCamY = dragStartCamY + deltaY;
+        }
       });
 
       canvas.addEventListener('pointerup', (e) => {
-        if (!isDragging) return;
-        isDragging = false;
-        canvas.releasePointerCapture(e.pointerId);
-        canvas.classList.remove('dragging');
+        activePointers.delete(e.pointerId);
+
+        if (activePointers.size < 2) {
+          lastPinchDistance = 0;
+        }
+
+        if (activePointers.size === 0) {
+          isDragging = false;
+          canvas.classList.remove('dragging');
+        }
+
+        try {
+          canvas.releasePointerCapture(e.pointerId);
+        } catch (err) {
+          // Ignore if pointer capture wasn't set
+        }
       });
 
       canvas.addEventListener('pointercancel', (e) => {
-        if (!isDragging) return;
-        isDragging = false;
-        canvas.releasePointerCapture(e.pointerId);
-        canvas.classList.remove('dragging');
+        activePointers.delete(e.pointerId);
+
+        if (activePointers.size < 2) {
+          lastPinchDistance = 0;
+        }
+
+        if (activePointers.size === 0) {
+          isDragging = false;
+          canvas.classList.remove('dragging');
+        }
+
+        try {
+          canvas.releasePointerCapture(e.pointerId);
+        } catch (err) {
+          // Ignore if pointer capture wasn't set
+        }
       });
 
-      // Wheel event handler for trackpad/wheel panning
+      // Wheel event handler for trackpad/wheel panning and zoom
       canvas.addEventListener('wheel', (e) => {
         e.preventDefault();
 
-        targetCamX -= e.deltaX;
-        targetCamY -= e.deltaY;
+        if (e.ctrlKey || e.metaKey) {
+          // Ctrl/Meta + wheel: zoom anchored at cursor
+          const rect = canvas.getBoundingClientRect();
+          const mouseX = e.clientX;
+          const mouseY = e.clientY;
+
+          // Zoom in/out based on deltaY
+          const zoomFactor = 1 - e.deltaY * 0.01;
+          const newZoom = targetZoom * zoomFactor;
+
+          applyAnchoredZoom(newZoom, mouseX, mouseY);
+        } else {
+          // Normal wheel: pan
+          targetCamX -= e.deltaX;
+          targetCamY -= e.deltaY;
+        }
       }, { passive: false });
 
       // Initialize
