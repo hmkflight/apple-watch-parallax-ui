@@ -20,7 +20,7 @@
   <div id="debug"></div>
 
   <script>
-    // Generate hex coordinates in concentric rings (Apple Watch style)
+    // Generate hex coordinates in concentric rings with q,r coordinates
     function generateHexRings(N, spacing) {
       const positions = [];
       const sqrt3 = Math.sqrt(3);
@@ -57,43 +57,78 @@
 
       // Convert axial (q,r) to pixel (x,y) - pointy-top hex
       return positions.map(({ q, r }) => ({
+        q,
+        r,
         x: spacing * sqrt3 * (q + r / 2),
         y: spacing * 1.5 * r
       }));
     }
 
+    // Build links from immediate hex neighbors only
+    function buildHexNeighborLinks(nodes) {
+      const links = [];
+
+      // Hex neighbor directions in axial coordinates
+      const neighborDirs = [
+        [+1,  0], [+1, -1], [ 0, -1],
+        [-1,  0], [-1, +1], [ 0, +1]
+      ];
+
+      // Create lookup map: "q,r" -> node.id
+      const coordMap = new Map();
+      nodes.forEach(node => {
+        coordMap.set(`${node.q},${node.r}`, node.id);
+      });
+
+      // For each node, check all 6 neighbor positions
+      nodes.forEach(node => {
+        neighborDirs.forEach(([dq, dr]) => {
+          const neighborKey = `${node.q + dq},${node.r + dr}`;
+          const neighborId = coordMap.get(neighborKey);
+
+          // Only add link if neighbor exists and avoid duplicates
+          if (neighborId !== undefined && node.id < neighborId) {
+            links.push({
+              source: node.id,
+              target: neighborId
+            });
+          }
+        });
+      });
+
+      return links;
+    }
+
     // Configuration - spacing derived from node size for uniform appearance
     const N = 300;
     const nodeRadius = 12; // Tuned for Apple Watch aesthetic
-    const gap = 10; // Gap between nodes
-    const hexSpacing = (nodeRadius * 2) + gap; // Consistent spacing = 34
+    const gap = 12; // Gap between nodes
+    const hexSpacing = (nodeRadius * 2) + gap; // Consistent spacing = 36
 
     const positions = generateHexRings(N, hexSpacing);
 
-    // Create nodes with deterministic honeycomb positions
-    const gData = {
-      nodes: [...Array(N).keys()].map(i => {
-        const pos = positions[i];
-        // Ensure finite anchor positions
-        const anchorX = Number.isFinite(pos.x) ? pos.x : 0;
-        const anchorY = Number.isFinite(pos.y) ? pos.y : 0;
-        return {
-          id: i,
-          x: anchorX,
-          y: anchorY,
-          anchorX: anchorX, // Home position for anchor force
-          anchorY: anchorY,
-          radius: nodeRadius
-        };
-      }),
-      // Generate tree-like links to keep connectivity visible
-      links: [...Array(N).keys()]
-        .filter(id => id)
-        .map(id => ({
-          source: id,
-          target: Math.floor((id - 1) / 2) // Binary tree structure
-        }))
-    };
+    // Create nodes with deterministic honeycomb positions and hex coordinates
+    const nodes = [...Array(N).keys()].map(i => {
+      const pos = positions[i];
+      // Ensure finite anchor positions
+      const anchorX = Number.isFinite(pos.x) ? pos.x : 0;
+      const anchorY = Number.isFinite(pos.y) ? pos.y : 0;
+      return {
+        id: i,
+        q: pos.q, // Axial hex coordinate
+        r: pos.r, // Axial hex coordinate
+        x: anchorX,
+        y: anchorY,
+        anchorX: anchorX, // Home position for anchor force
+        anchorY: anchorY,
+        radius: nodeRadius
+      };
+    });
+
+    // Build links from immediate hex neighbors only (no spaghetti)
+    const links = buildHexNeighborLinks(nodes);
+
+    const gData = { nodes, links };
 
     // Custom anchor force to maintain honeycomb spacing (alpha-scaled)
     function anchorForce(strength = 0.02) {
@@ -139,7 +174,7 @@
         .nodeRelSize(1.5) // Additional size multiplier
         .d3VelocityDecay(0.5) // Balanced friction for stability
         .d3AlphaDecay(0.08) // Moderate cooling rate
-        .d3Force('charge', null) // Remove charge repulsion
+        .d3Force('charge', d3.forceManyBody().strength(-20)) // Mild repulsion
         .d3Force('center', null) // Remove centering force (already centered)
         .d3Force('collide', d3.forceCollide(node => node.radius + gap / 2).iterations(3)) // Uniform spacing
         .d3Force('anchor', anchorForce(0.02)) // Maintain honeycomb shape
@@ -152,10 +187,10 @@
           }
         });
 
-    // Configure link force after graphData to keep links gentle
+    // Configure link force after graphData to match hex spacing
     const linkForce = Graph.d3Force('link');
     if (linkForce) {
-      linkForce.distance(hexSpacing).strength(0.05); // Gentle links, spacing-matching distance
+      linkForce.distance(hexSpacing).strength(0.15); // Match spacing, moderate strength
     }
 
     // Apply initial size
@@ -178,6 +213,7 @@
         Container: ${Math.floor(rect.width)}×${Math.floor(rect.height)}px<br>
         Zoom: ${Graph.zoom().toFixed(2)}<br>
         Nodes: ${nodes.length}<br>
+        Links: ${Graph.graphData().links.length}<br>
         Finite positions: ${anyFinite ? 'YES' : 'NO'}
       `;
     }, 1000);
