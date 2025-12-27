@@ -5,48 +5,63 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>Apple Watch Parallax UI</title>
   <style>
-    html, body { margin: 0; height: 100%; overflow: hidden; }
-    #graph { position: fixed; inset: 0; width: 100vw; height: 100vh; }
-    #debug { position: fixed; top: 10px; left: 10px; background: rgba(0,0,0,0.7); color: #0f0; padding: 8px; font-family: monospace; font-size: 11px; z-index: 1000; pointer-events: none; }
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    html, body { width: 100%; height: 100%; overflow: hidden; }
+    body { background: #000; }
+    #canvas { display: block; width: 100%; height: 100%; cursor: grab; }
+    #canvas:active { cursor: grabbing; }
+    #debug {
+      position: fixed; top: 10px; left: 10px;
+      background: rgba(0,0,0,0.7); color: #0f0;
+      padding: 8px; font-family: monospace; font-size: 11px;
+      z-index: 1000; pointer-events: none;
+    }
   </style>
 
   <script src="https://unpkg.com/d3@7/dist/d3.min.js"></script>
-  <script src="//cdn.jsdelivr.net/npm/force-graph"></script>
-  <!--<script src="../../dist/force-graph.js"></script>-->
 </head>
 
 <body>
-  <div id="graph"></div>
+  <canvas id="canvas"></canvas>
   <div id="debug"></div>
 
   <script>
-    // Generate hex coordinates in concentric rings with q,r coordinates
+    // ========================================
+    // CONFIGURATION
+    // ========================================
+    const N = 300;              // Number of nodes
+    const nodeRadius = 12;      // Circle radius
+    const gap = 10;             // Gap between nodes
+    const hexSpacing = (nodeRadius * 2) + gap; // 34px between centers
+
+    // ========================================
+    // HONEYCOMB GENERATION (DETERMINISTIC)
+    // ========================================
+    // Generates nodes in concentric hex rings around (0,0)
+    // Returns array of {q, r, x, y} positions in axial coordinates
     function generateHexRings(N, spacing) {
       const positions = [];
       const sqrt3 = Math.sqrt(3);
 
-      // Axial hex directions (6 sides of hexagon)
+      // Axial hex directions (6 sides)
       const dirs = [
         [+1,  0], [+1, -1], [ 0, -1],
         [-1,  0], [-1, +1], [ 0, +1]
       ];
 
-      // Center hex
+      // Center
       positions.push({ q: 0, r: 0 });
 
-      // Generate rings outward from center
+      // Generate concentric rings
       let radius = 1;
       while (positions.length < N) {
-        // Start at top-left of ring
         let q = -radius;
         let r = 0;
 
-        // Walk around the ring
         for (let side = 0; side < 6; side++) {
           for (let step = 0; step < radius; step++) {
             if (positions.length >= N) break;
             positions.push({ q, r });
-            // Move in current direction
             q += dirs[side][0];
             r += dirs[side][1];
           }
@@ -64,34 +79,32 @@
       }));
     }
 
-    // Build links from immediate hex neighbors only
+    // ========================================
+    // BUILD HEX NEIGHBOR LINKS (OPTIONAL)
+    // ========================================
+    // Creates links only between immediate hex neighbors (max 6 per node)
     function buildHexNeighborLinks(nodes) {
       const links = [];
-
-      // Hex neighbor directions in axial coordinates
       const neighborDirs = [
         [+1,  0], [+1, -1], [ 0, -1],
         [-1,  0], [-1, +1], [ 0, +1]
       ];
 
-      // Create lookup map: "q,r" -> node.id
+      // Map: "q,r" -> node
       const coordMap = new Map();
       nodes.forEach(node => {
-        coordMap.set(`${node.q},${node.r}`, node.id);
+        coordMap.set(`${node.q},${node.r}`, node);
       });
 
-      // For each node, check all 6 neighbor positions
+      // For each node, check 6 neighbors
       nodes.forEach(node => {
         neighborDirs.forEach(([dq, dr]) => {
           const neighborKey = `${node.q + dq},${node.r + dr}`;
-          const neighborId = coordMap.get(neighborKey);
+          const neighbor = coordMap.get(neighborKey);
 
-          // Only add link if neighbor exists and avoid duplicates
-          if (neighborId !== undefined && node.id < neighborId) {
-            links.push({
-              source: node.id,
-              target: neighborId
-            });
+          // Add link if neighbor exists (avoid duplicates)
+          if (neighbor && node.id < neighbor.id) {
+            links.push({ source: node, target: neighbor });
           }
         });
       });
@@ -99,151 +112,173 @@
       return links;
     }
 
-    // Configuration - spacing derived from node size for uniform appearance
-    const N = 300;
-    const nodeRadius = 12; // Tuned for Apple Watch aesthetic
-    const gap = 12; // Gap between nodes
-    const hexSpacing = (nodeRadius * 2) + gap; // Consistent spacing = 36
-
+    // ========================================
+    // CREATE NODES & LINKS
+    // ========================================
     const positions = generateHexRings(N, hexSpacing);
+    const nodes = positions.map((pos, i) => ({
+      id: i,
+      q: pos.q,
+      r: pos.r,
+      x: pos.x,
+      y: pos.y,
+      anchorX: pos.x,  // Home position
+      anchorY: pos.y,
+      vx: 0,
+      vy: 0,
+      radius: nodeRadius
+    }));
 
-    // Create nodes with deterministic honeycomb positions and hex coordinates
-    const nodes = [...Array(N).keys()].map(i => {
-      const pos = positions[i];
-      // Ensure finite anchor positions
-      const anchorX = Number.isFinite(pos.x) ? pos.x : 0;
-      const anchorY = Number.isFinite(pos.y) ? pos.y : 0;
-      return {
-        id: i,
-        q: pos.q, // Axial hex coordinate
-        r: pos.r, // Axial hex coordinate
-        x: anchorX,
-        y: anchorY,
-        anchorX: anchorX, // Home position for anchor force
-        anchorY: anchorY,
-        radius: nodeRadius
-      };
-    });
-
-    // Build links from immediate hex neighbors only (no spaghetti)
     const links = buildHexNeighborLinks(nodes);
 
-    const gData = { nodes, links };
-
-    // Custom anchor force to maintain honeycomb spacing (alpha-scaled)
-    function anchorForce(strength = 0.02) {
-      let nodes;
-
-      function force(alpha) {
-        for (let i = 0; i < nodes.length; i++) {
-          const node = nodes[i];
-
-          // Defensive guards against NaN/undefined
-          if (!Number.isFinite(node.anchorX)) node.anchorX = 0;
-          if (!Number.isFinite(node.anchorY)) node.anchorY = 0;
+    // ========================================
+    // D3-FORCE SIMULATION
+    // ========================================
+    // Keeps honeycomb stable with subtle motion
+    const simulation = d3.forceSimulation(nodes)
+      .force('collide', d3.forceCollide(d => d.radius + gap / 2).iterations(3))
+      .force('charge', d3.forceManyBody().strength(-15))
+      .force('link', d3.forceLink(links).distance(hexSpacing).strength(0.1))
+      .force('anchor', () => {
+        // Custom anchor force: pulls nodes gently back to home positions
+        const strength = 0.02;
+        const alpha = simulation.alpha();
+        nodes.forEach(node => {
           if (!Number.isFinite(node.x)) node.x = node.anchorX;
           if (!Number.isFinite(node.y)) node.y = node.anchorY;
           if (!Number.isFinite(node.vx)) node.vx = 0;
           if (!Number.isFinite(node.vy)) node.vy = 0;
 
-          // Apply alpha-scaled anchor force
           node.vx += (node.anchorX - node.x) * strength * alpha;
           node.vy += (node.anchorY - node.y) * strength * alpha;
-        }
-      }
-
-      force.initialize = function(_) { nodes = _; };
-
-      return force;
-    }
-
-    // Bulletproof sizing using container measurements
-    const el = document.getElementById('graph');
-
-    function updateGraphSize() {
-      const rect = el.getBoundingClientRect();
-      const w = Math.max(1, Math.floor(rect.width));
-      const h = Math.max(1, Math.floor(rect.height));
-      Graph.width(w).height(h);
-    }
-
-    const Graph = new ForceGraph()
-      (el)
-        .graphData(gData)
-        .nodeVal(node => node.radius * 2) // Size based on radius
-        .nodeRelSize(1.5) // Additional size multiplier
-        .d3VelocityDecay(0.5) // Balanced friction for stability
-        .d3AlphaDecay(0.08) // Moderate cooling rate
-        .d3Force('charge', d3.forceManyBody().strength(-20)) // Mild repulsion
-        .d3Force('center', null) // Remove centering force (already centered)
-        .d3Force('collide', d3.forceCollide(node => node.radius + gap / 2).iterations(3)) // Uniform spacing
-        .d3Force('anchor', anchorForce(0.02)) // Maintain honeycomb shape
-        .onEngineStop(() => {
-          // Prevent permanent stop - reheat and refresh
-          const gd = Graph.graphData();
-          if (gd?.nodes?.length) {
-            Graph.d3ReheatSimulation();
-            Graph.refresh();
-          }
         });
+      })
+      .alphaDecay(0.05)
+      .velocityDecay(0.5);
 
-    // Configure link force after graphData to match hex spacing
-    const linkForce = Graph.d3Force('link');
-    if (linkForce) {
-      linkForce.distance(hexSpacing).strength(0.15); // Match spacing, moderate strength
+    // ========================================
+    // CANVAS SETUP
+    // ========================================
+    const canvas = document.getElementById('canvas');
+    const ctx = canvas.getContext('2d');
+    let width = canvas.width = window.innerWidth;
+    let height = canvas.height = window.innerHeight;
+
+    // Handle window resize
+    window.addEventListener('resize', () => {
+      width = canvas.width = window.innerWidth;
+      height = canvas.height = window.innerHeight;
+    });
+
+    // ========================================
+    // CAMERA SYSTEM (PAN/ZOOM)
+    // ========================================
+    let camera = {
+      x: 0,         // Camera offset X
+      y: 0,         // Camera offset Y
+      zoom: 1,      // Zoom level
+      targetZoom: 1 // Smooth zoom target
+    };
+
+    // Mouse interaction state
+    let isDragging = false;
+    let dragStart = { x: 0, y: 0 };
+    let cameraStart = { x: 0, y: 0 };
+
+    // Mouse down: start drag
+    canvas.addEventListener('mousedown', (e) => {
+      isDragging = true;
+      dragStart = { x: e.clientX, y: e.clientY };
+      cameraStart = { x: camera.x, y: camera.y };
+    });
+
+    // Mouse move: pan camera
+    canvas.addEventListener('mousemove', (e) => {
+      if (isDragging) {
+        const dx = e.clientX - dragStart.x;
+        const dy = e.clientY - dragStart.y;
+        camera.x = cameraStart.x + dx;
+        camera.y = cameraStart.y + dy;
+      }
+    });
+
+    // Mouse up: stop drag
+    canvas.addEventListener('mouseup', () => {
+      isDragging = false;
+    });
+
+    canvas.addEventListener('mouseleave', () => {
+      isDragging = false;
+    });
+
+    // Mouse wheel: zoom
+    canvas.addEventListener('wheel', (e) => {
+      e.preventDefault();
+      const zoomSpeed = 0.001;
+      camera.targetZoom *= (1 - e.deltaY * zoomSpeed);
+      camera.targetZoom = Math.max(0.5, Math.min(3, camera.targetZoom));
+    }, { passive: false });
+
+    // ========================================
+    // RENDERING LOOP
+    // ========================================
+    function render() {
+      // Smooth zoom
+      camera.zoom += (camera.targetZoom - camera.zoom) * 0.1;
+
+      // Clear canvas
+      ctx.fillStyle = '#000';
+      ctx.fillRect(0, 0, width, height);
+
+      // Apply camera transform
+      ctx.save();
+      ctx.translate(width / 2 + camera.x, height / 2 + camera.y);
+      ctx.scale(camera.zoom, camera.zoom);
+
+      // Draw links (thin gray lines)
+      ctx.strokeStyle = 'rgba(255, 255, 255, 0.15)';
+      ctx.lineWidth = 1 / camera.zoom;
+      ctx.beginPath();
+      links.forEach(link => {
+        ctx.moveTo(link.source.x, link.source.y);
+        ctx.lineTo(link.target.x, link.target.y);
+      });
+      ctx.stroke();
+
+      // Draw nodes (white circles)
+      nodes.forEach(node => {
+        ctx.beginPath();
+        ctx.arc(node.x, node.y, node.radius, 0, 2 * Math.PI);
+        ctx.fillStyle = '#fff';
+        ctx.fill();
+        ctx.strokeStyle = 'rgba(0, 0, 0, 0.2)';
+        ctx.lineWidth = 2 / camera.zoom;
+        ctx.stroke();
+      });
+
+      ctx.restore();
+
+      requestAnimationFrame(render);
     }
 
-    // Apply initial size
-    updateGraphSize();
-
-    // ResizeObserver for container size changes
-    const resizeObserver = new ResizeObserver(() => {
-      updateGraphSize();
-    });
-    resizeObserver.observe(el);
-
-    // Debug overlay (updates every second)
+    // ========================================
+    // DEBUG OVERLAY
+    // ========================================
     const debugEl = document.getElementById('debug');
     setInterval(() => {
-      const rect = el.getBoundingClientRect();
-      const nodes = Graph.graphData().nodes;
-      const anyFinite = nodes.some(n => Number.isFinite(n.x) && Number.isFinite(n.y));
-
       debugEl.innerHTML = `
-        Container: ${Math.floor(rect.width)}×${Math.floor(rect.height)}px<br>
-        Zoom: ${Graph.zoom().toFixed(2)}<br>
+        Canvas: ${width}×${height}px<br>
+        Zoom: ${camera.zoom.toFixed(2)}<br>
         Nodes: ${nodes.length}<br>
-        Links: ${Graph.graphData().links.length}<br>
-        Finite positions: ${anyFinite ? 'YES' : 'NO'}
+        Links: ${links.length}<br>
+        Alpha: ${simulation.alpha().toFixed(3)}
       `;
     }, 1000);
 
-    // Safety net: periodic check and refresh (every 2 seconds)
-    setInterval(() => {
-      const gd = Graph.graphData();
-      if (!gd?.nodes?.length) return;
-
-      // Check if positions are valid
-      const anyFinite = gd.nodes.some(n => Number.isFinite(n.x) && Number.isFinite(n.y));
-      if (!anyFinite) {
-        // Reset to anchors if positions became invalid
-        gd.nodes.forEach(n => {
-          n.x = n.anchorX || 0;
-          n.y = n.anchorY || 0;
-          n.vx = 0;
-          n.vy = 0;
-        });
-        Graph.d3ReheatSimulation();
-      }
-
-      // Always refresh to prevent disappearance
-      Graph.refresh();
-    }, 2000);
-
-    // Calm the simulation on load
-    setTimeout(() => {
-      Graph.d3AlphaDecay(0.05); // Slow down settling
-    }, 500);
+    // ========================================
+    // START
+    // ========================================
+    render();
   </script>
 </body>
 </html>
