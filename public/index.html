@@ -7,6 +7,7 @@
   <style> body { margin: 0; } </style>
 
   <script src="//cdn.jsdelivr.net/npm/force-graph"></script>
+  <script src="//unpkg.com/d3-force@3"></script>
   <!--<script src="../../dist/force-graph.js"></script>-->
 </head>
 
@@ -14,77 +15,103 @@
   <div id="graph"></div>
 
   <script>
-    // Deterministic honeycomb position generator
-    function generateHexHoneycombPositions(N, spacing) {
+    // Generate hex coordinates in concentric rings (Apple Watch style)
+    function generateHexRings(N, spacing) {
       const positions = [];
       const sqrt3 = Math.sqrt(3);
 
-      // Generate rectangular hex grid centered at origin
-      const gridSize = Math.ceil(Math.sqrt(N));
-      let count = 0;
+      // Axial hex directions (6 sides of hexagon)
+      const dirs = [
+        [+1,  0], [+1, -1], [ 0, -1],
+        [-1,  0], [-1, +1], [ 0, +1]
+      ];
 
-      for (let row = -gridSize; row <= gridSize && count < N; row++) {
-        for (let col = -gridSize; col <= gridSize && count < N; col++) {
-          // Offset coordinates: even rows shift right by half spacing
-          const x = col * spacing * sqrt3 + (row % 2) * spacing * sqrt3 / 2;
-          const y = row * spacing * 1.5;
-          positions.push({ x, y });
-          count++;
+      // Center hex
+      positions.push({ q: 0, r: 0 });
+
+      // Generate rings outward from center
+      let radius = 1;
+      while (positions.length < N) {
+        // Start at top-left of ring
+        let q = -radius;
+        let r = 0;
+
+        // Walk around the ring
+        for (let side = 0; side < 6; side++) {
+          for (let step = 0; step < radius; step++) {
+            if (positions.length >= N) break;
+            positions.push({ q, r });
+            // Move in current direction
+            q += dirs[side][0];
+            r += dirs[side][1];
+          }
+          if (positions.length >= N) break;
         }
+        radius++;
       }
 
-      // Center the grid at (0, 0)
-      if (positions.length > 0) {
-        const avgX = positions.reduce((sum, p) => sum + p.x, 0) / positions.length;
-        const avgY = positions.reduce((sum, p) => sum + p.y, 0) / positions.length;
-        positions.forEach(p => {
-          p.x -= avgX;
-          p.y -= avgY;
-        });
-      }
-
-      return positions;
+      // Convert axial (q,r) to pixel (x,y) - pointy-top hex
+      return positions.map(({ q, r }) => ({
+        x: spacing * sqrt3 * (q + r / 2),
+        y: spacing * 1.5 * r
+      }));
     }
 
-    // Generate deterministic data
+    // Configuration
     const N = 300;
-    const hexSpacing = 30; // Spacing between hexagons
-    const positions = generateHexHoneycombPositions(N, hexSpacing);
+    const nodeRadius = 18; // Larger circles
+    const hexSpacing = 46; // spacing between hex centers (radius*2 + gap)
 
-    // Create nodes with deterministic positions
+    const positions = generateHexRings(N, hexSpacing);
+
+    // Create nodes with deterministic honeycomb positions
     const gData = {
       nodes: [...Array(N).keys()].map(i => ({
         id: i,
         x: positions[i].x,
         y: positions[i].y,
-        fx: positions[i].x, // Fix position initially
-        fy: positions[i].y
+        anchorX: positions[i].x, // Home position for anchor force
+        anchorY: positions[i].y,
+        radius: nodeRadius
       })),
-      links: [...Array(N).keys()]
-        .filter(id => id)
-        .map(id => ({
-          source: id,
-          target: Math.floor((id - 1) / 2) // Deterministic binary tree structure
-        }))
+      links: [] // No links - pure icon field like Apple Watch
     };
+
+    // Custom anchor force to keep honeycomb shape
+    function anchorForce(strength = 0.008) {
+      let nodes;
+
+      function force(alpha) {
+        for (let i = 0; i < nodes.length; i++) {
+          const node = nodes[i];
+          if (node.anchorX !== undefined && node.anchorY !== undefined) {
+            node.vx += (node.anchorX - node.x) * strength;
+            node.vy += (node.anchorY - node.y) * strength;
+          }
+        }
+      }
+
+      force.initialize = function(_) { nodes = _; };
+
+      return force;
+    }
 
     const Graph = new ForceGraph()
       (document.getElementById('graph'))
         .graphData(gData)
-        .nodeVal(8) // Larger node value
-        .nodeRelSize(6) // Increase relative size multiplier
-        .linkDirectionalParticles(2)
-        .d3AlphaDecay(0.02) // Slower cooling for smoother settling
-        .d3VelocityDecay(0.3); // Higher friction to reduce initial scramble
+        .nodeVal(node => node.radius * 2) // Size based on radius
+        .nodeRelSize(1.5) // Additional size multiplier
+        .d3VelocityDecay(0.6) // Higher friction for stability
+        .d3AlphaDecay(0.08) // Moderate cooling rate
+        .d3Force('charge', null) // Remove charge repulsion
+        .d3Force('center', null) // Remove centering force (already centered)
+        .d3Force('collide', d3.forceCollide(node => node.radius + 4).iterations(2)) // Prevent overlap
+        .d3Force('anchor', anchorForce(0.008)); // Keep honeycomb shape
 
-    // Release fixed positions after initial render to allow physics
+    // Calm the simulation on load
     setTimeout(() => {
-      gData.nodes.forEach(node => {
-        node.fx = undefined;
-        node.fy = undefined;
-      });
-      Graph.graphData(gData); // Update to apply changes
-    }, 800); // 800ms delay for stable initial view
+      Graph.d3AlphaDecay(0.05); // Slow down settling
+    }, 500);
   </script>
 </body>
 </html>
