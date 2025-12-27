@@ -6,7 +6,8 @@
   <title>Apple Watch Parallax UI</title>
   <style>
     html, body { margin: 0; height: 100%; overflow: hidden; }
-    #graph { width: 100vw; height: 100vh; }
+    #graph { position: fixed; inset: 0; width: 100vw; height: 100vh; }
+    #debug { position: fixed; top: 10px; left: 10px; background: rgba(0,0,0,0.7); color: #0f0; padding: 8px; font-family: monospace; font-size: 11px; z-index: 1000; pointer-events: none; }
   </style>
 
   <script src="//cdn.jsdelivr.net/npm/force-graph"></script>
@@ -16,6 +17,7 @@
 
 <body>
   <div id="graph"></div>
+  <div id="debug"></div>
 
   <script>
     // Generate hex coordinates in concentric rings (Apple Watch style)
@@ -69,34 +71,47 @@
 
     // Create nodes with deterministic honeycomb positions
     const gData = {
-      nodes: [...Array(N).keys()].map(i => ({
-        id: i,
-        x: positions[i].x,
-        y: positions[i].y,
-        anchorX: positions[i].x, // Home position for anchor force
-        anchorY: positions[i].y,
-        radius: nodeRadius
-      })),
+      nodes: [...Array(N).keys()].map(i => {
+        const pos = positions[i];
+        // Ensure finite anchor positions
+        const anchorX = Number.isFinite(pos.x) ? pos.x : 0;
+        const anchorY = Number.isFinite(pos.y) ? pos.y : 0;
+        return {
+          id: i,
+          x: anchorX,
+          y: anchorY,
+          anchorX: anchorX, // Home position for anchor force
+          anchorY: anchorY,
+          radius: nodeRadius
+        };
+      }),
       links: [] // No links - pure icon field like Apple Watch
     };
 
-    // Custom anchor force to keep honeycomb shape
+    // Custom anchor force to keep honeycomb shape (with clamped acceleration)
     function anchorForce(strength = 0.008) {
       let nodes;
+      const MAX_ACCEL = 0.5; // Clamp max acceleration per tick
 
       function force(alpha) {
         for (let i = 0; i < nodes.length; i++) {
           const node = nodes[i];
+
           // Defensive guards against NaN/undefined
-          if (!Number.isFinite(node.x)) node.x = node.anchorX || 0;
-          if (!Number.isFinite(node.y)) node.y = node.anchorY || 0;
+          if (!Number.isFinite(node.anchorX)) node.anchorX = 0;
+          if (!Number.isFinite(node.anchorY)) node.anchorY = 0;
+          if (!Number.isFinite(node.x)) node.x = node.anchorX;
+          if (!Number.isFinite(node.y)) node.y = node.anchorY;
           if (!Number.isFinite(node.vx)) node.vx = 0;
           if (!Number.isFinite(node.vy)) node.vy = 0;
 
-          if (node.anchorX !== undefined && node.anchorY !== undefined) {
-            node.vx += (node.anchorX - node.x) * strength;
-            node.vy += (node.anchorY - node.y) * strength;
-          }
+          // Calculate clamped acceleration toward anchor
+          const ax = (node.anchorX - node.x) * strength;
+          const ay = (node.anchorY - node.y) * strength;
+
+          // Clamp to prevent explosion
+          node.vx += Math.max(-MAX_ACCEL, Math.min(MAX_ACCEL, ax));
+          node.vy += Math.max(-MAX_ACCEL, Math.min(MAX_ACCEL, ay));
         }
       }
 
@@ -105,10 +120,18 @@
       return force;
     }
 
+    // Bulletproof sizing using container measurements
+    const el = document.getElementById('graph');
+
+    function updateGraphSize() {
+      const rect = el.getBoundingClientRect();
+      const w = Math.max(1, Math.floor(rect.width));
+      const h = Math.max(1, Math.floor(rect.height));
+      Graph.width(w).height(h);
+    }
+
     const Graph = new ForceGraph()
-      (document.getElementById('graph'))
-        .width(window.innerWidth)
-        .height(window.innerHeight)
+      (el)
         .graphData(gData)
         .nodeVal(node => node.radius * 2) // Size based on radius
         .nodeRelSize(1.5) // Additional size multiplier
@@ -117,12 +140,43 @@
         .d3Force('charge', null) // Remove charge repulsion
         .d3Force('center', null) // Remove centering force (already centered)
         .d3Force('collide', d3.forceCollide(node => node.radius + 4).iterations(2)) // Prevent overlap
-        .d3Force('anchor', anchorForce(0.008)); // Keep honeycomb shape
+        .d3Force('anchor', anchorForce(0.008)) // Keep honeycomb shape
+        .onEngineStop(() => {
+          // Force refresh when simulation stops
+          Graph.refresh();
+        });
 
-    // Handle window resize
-    window.addEventListener('resize', () => {
-      Graph.width(window.innerWidth).height(window.innerHeight);
+    // Apply initial size
+    updateGraphSize();
+
+    // ResizeObserver for container size changes
+    const resizeObserver = new ResizeObserver(() => {
+      updateGraphSize();
     });
+    resizeObserver.observe(el);
+
+    // Debug overlay (updates every second)
+    const debugEl = document.getElementById('debug');
+    setInterval(() => {
+      const rect = el.getBoundingClientRect();
+      const nodes = Graph.graphData().nodes;
+      const anyFinite = nodes.some(n => Number.isFinite(n.x) && Number.isFinite(n.y));
+
+      debugEl.innerHTML = `
+        Container: ${Math.floor(rect.width)}×${Math.floor(rect.height)}px<br>
+        Zoom: ${Graph.zoom().toFixed(2)}<br>
+        Nodes: ${nodes.length}<br>
+        Finite positions: ${anyFinite ? 'YES' : 'NO'}
+      `;
+    }, 1000);
+
+    // Watchdog: force refresh if nodes exist but seem invisible
+    setInterval(() => {
+      const nodes = Graph.graphData().nodes;
+      if (nodes.length > 0) {
+        Graph.refresh();
+      }
+    }, 5000);
 
     // Calm the simulation on load
     setTimeout(() => {
