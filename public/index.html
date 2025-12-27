@@ -29,8 +29,7 @@
 
       // Configuration
       const NODE_RADIUS = 28;
-      const HEX_SPACING = 80;
-      const RING_COUNT = 7;
+      const HEX_SPACING = 62;
       const LINE_COLOR = 'rgba(80, 80, 80, 0.3)';
       const NODE_COLOR = '#1a1a1a';
       const NODE_STROKE = '#333';
@@ -41,6 +40,7 @@
 
       let nodes = [];
       let links = [];
+      let gridBounds = { minX: 0, maxX: 0, minY: 0, maxY: 0 };
 
       // Setup canvas with DPI scaling
       function setupCanvas() {
@@ -56,7 +56,11 @@
       }
 
       // Generate honeycomb hex grid using axial coordinates
-      function generateHexGrid() {
+      function generateHexGrid(viewportWidth, viewportHeight) {
+        // Calculate how many rings needed to fill viewport
+        const maxDimension = Math.max(viewportWidth, viewportHeight);
+        const RING_COUNT = Math.ceil(maxDimension / (HEX_SPACING * Math.sqrt(3))) + 2;
+
         const positions = [];
         const coordMap = new Map();
 
@@ -99,6 +103,14 @@
           return { id, x, y, q: pos.q, r: pos.r, letter };
         });
 
+        // Compute bounding box
+        if (nodes.length > 0) {
+          gridBounds.minX = Math.min(...nodes.map(n => n.x));
+          gridBounds.maxX = Math.max(...nodes.map(n => n.x));
+          gridBounds.minY = Math.min(...nodes.map(n => n.y));
+          gridBounds.maxY = Math.max(...nodes.map(n => n.y));
+        }
+
         // Generate neighbor-only links
         links = [];
         nodes.forEach(node => {
@@ -124,12 +136,14 @@
 
         ctx.clearRect(0, 0, width, height);
 
-        // Center the grid
-        const centerX = width / 2;
-        const centerY = height / 2;
+        // Center the grid based on its bounding box
+        const gridCenterX = (gridBounds.minX + gridBounds.maxX) / 2;
+        const gridCenterY = (gridBounds.minY + gridBounds.maxY) / 2;
+        const offsetX = width / 2 - gridCenterX;
+        const offsetY = height / 2 - gridCenterY;
 
         ctx.save();
-        ctx.translate(centerX, centerY);
+        ctx.translate(offsetX, offsetY);
 
         // Draw links first (behind nodes)
         ctx.strokeStyle = LINE_COLOR;
@@ -180,12 +194,17 @@
 
       // Initialize
       function init() {
-        generateHexGrid();
+        const rect = canvas.getBoundingClientRect();
+        generateHexGrid(rect.width, rect.height);
         render();
       }
 
       // Handle window resize
-      window.addEventListener('resize', render);
+      window.addEventListener('resize', () => {
+        const rect = canvas.getBoundingClientRect();
+        generateHexGrid(rect.width, rect.height);
+        render();
+      });
 
       // Start
       init();
