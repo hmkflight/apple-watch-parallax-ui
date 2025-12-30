@@ -33,15 +33,35 @@
       const ctx = canvas.getContext('2d');
 
       // Configuration
-      const NODE_RADIUS = 42;
-      const RING_SPACING = 105;
+      const NODE_RADIUS = 55;
+      const RING_SPACING = 130;
       const LINE_COLOR = 'rgba(80, 80, 80, 0.3)';
       const NODE_COLOR = '#1a1a1a';
-      const NODE_STROKE = '#333';
+      const NODE_STROKE = '#444';
       const TEXT_COLOR = '#fff';
 
-      // Placeholder letters for icons
-      const LETTERS = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789';
+      // Icon data with external logo URLs
+      const ICONS = [
+        { name: "MasterClass", logoUrl: "https://upload.wikimedia.org/wikipedia/commons/3/34/MasterClass_Logo.svg", href: "https://www.masterclass.com", bgColor: "#000000", type: "link" },
+        { name: "Coursera", logoUrl: "https://upload.wikimedia.org/wikipedia/commons/e/e5/Coursera_logo.svg", href: "https://www.coursera.org", bgColor: "#0056D2", type: "link" },
+        { name: "Khan Academy", logoUrl: "https://upload.wikimedia.org/wikipedia/commons/0/0c/Khan_Academy_logo_2018.svg", href: "https://www.khanacademy.org", bgColor: "#14BF96", type: "link" },
+        { name: "Udemy", logoUrl: "https://upload.wikimedia.org/wikipedia/commons/e/e3/Udemy_logo.svg", href: "https://www.udemy.com", bgColor: "#A435F0", type: "link" },
+        { name: "edX", logoUrl: "https://upload.wikimedia.org/wikipedia/commons/c/cd/EdX_newer_logo.svg", href: "https://www.edx.org", bgColor: "#02262B", type: "link" },
+        { name: "Skillshare", logoUrl: "https://upload.wikimedia.org/wikipedia/commons/0/0f/Skillshare_logo_2020.svg", href: "https://www.skillshare.com", bgColor: "#00FF84", type: "link" },
+        { name: "LinkedIn Learning", logoUrl: "https://upload.wikimedia.org/wikipedia/commons/0/01/LinkedIn_Logo.svg", href: "https://www.linkedin.com/learning/", bgColor: "#0A66C2", type: "link" },
+        { name: "Brilliant", logoUrl: "https://brilliant.org/site_media/version-1705077046/images/logos/brilliant-logo-dark.svg", href: "https://brilliant.org", bgColor: "#111111", type: "link" },
+        { name: "Duolingo", logoUrl: "https://upload.wikimedia.org/wikipedia/commons/d/d0/Duolingo_logo.svg", href: "https://www.duolingo.com", bgColor: "#58CC02", type: "link" },
+        { name: "Codecademy", logoUrl: "https://upload.wikimedia.org/wikipedia/commons/7/7d/Codecademy_logo_2020.svg", href: "https://www.codecademy.com", bgColor: "#1F4056", type: "link" },
+        { name: "FutureLearn", logoUrl: "https://upload.wikimedia.org/wikipedia/commons/5/59/FutureLearn_logo.svg", href: "https://www.futurelearn.com", bgColor: "#DE3F7C", type: "link" },
+        { name: "Pluralsight", logoUrl: "https://upload.wikimedia.org/wikipedia/commons/3/37/Pluralsight_Logo.svg", href: "https://www.pluralsight.com", bgColor: "#F15B2A", type: "link" },
+        { name: "DataCamp", logoUrl: "https://upload.wikimedia.org/wikipedia/commons/5/53/DataCamp_logo_%282019%29.svg", href: "https://www.datacamp.com", bgColor: "#03EF62", type: "link" },
+        { name: "Udacity", logoUrl: "https://upload.wikimedia.org/wikipedia/commons/e/e8/Udacity_logo.svg", href: "https://www.udacity.com", bgColor: "#02B3E4", type: "link" },
+        { name: "Video", logoUrl: "", href: "PASTE_DRIVE_SHARE_LINK_HERE", bgColor: "#FF0000", type: "video" }
+      ];
+
+      // Image cache
+      const imageCache = new Map();
+      const imageLoadStatus = new Map();
 
       let nodes = [];
       let links = [];
@@ -70,6 +90,7 @@
       let dragStartY = 0;
       let dragStartCamX = 0;
       let dragStartCamY = 0;
+      let hasDragged = false;
 
       // Pinch state
       const activePointers = new Map();
@@ -85,6 +106,28 @@
       const FOCUS_EASING = 0.2;
       const LENS_RADIUS = 250;
       const LENS_MAX_SCALE = 1.5;
+
+      // Preload images
+      function preloadImages() {
+        ICONS.forEach(icon => {
+          if (!icon.logoUrl) return;
+
+          const img = new Image();
+          img.crossOrigin = "anonymous";
+
+          img.onload = () => {
+            imageCache.set(icon.logoUrl, img);
+            imageLoadStatus.set(icon.logoUrl, 'loaded');
+          };
+
+          img.onerror = () => {
+            imageLoadStatus.set(icon.logoUrl, 'error');
+          };
+
+          imageLoadStatus.set(icon.logoUrl, 'loading');
+          img.src = icon.logoUrl;
+        });
+      }
 
       // Setup canvas with DPI scaling
       function setupCanvas() {
@@ -145,13 +188,14 @@
         let nodeId = 0;
 
         // Center node
+        const centerIcon = ICONS[nodeId % ICONS.length];
         nodes.push({
           id: nodeId++,
           x: 0,
           y: 0,
           ring: 0,
           index: 0,
-          letter: LETTERS[0 % LETTERS.length]
+          icon: centerIcon
         });
 
         // Generate concentric rings
@@ -167,6 +211,7 @@
             const x = radius * Math.cos(angle);
             const y = radius * Math.sin(angle);
 
+            const iconData = ICONS[nodeId % ICONS.length];
             nodes.push({
               id: nodeId++,
               x,
@@ -174,7 +219,7 @@
               ring,
               index: i,
               nodesInRing,
-              letter: LETTERS[nodeId % LETTERS.length]
+              icon: iconData
             });
           }
         }
@@ -300,37 +345,127 @@
             // Apply magnification transform
             const scaledRadius = NODE_RADIUS * lensScale;
 
-            // Circle background
-            ctx.fillStyle = NODE_COLOR;
+            // Circle background with icon color
+            ctx.fillStyle = node.icon.bgColor || NODE_COLOR;
             ctx.strokeStyle = NODE_STROKE;
-            ctx.lineWidth = 2;
+            ctx.lineWidth = 2.5;
 
             ctx.beginPath();
             ctx.arc(node.x, node.y, scaledRadius, 0, Math.PI * 2);
             ctx.fill();
             ctx.stroke();
 
-            // Subtle inner shadow effect
-            const gradient = ctx.createRadialGradient(
-              node.x, node.y - scaledRadius * 0.3, 0,
+            // Subtle outer glow
+            ctx.shadowColor = 'rgba(255, 255, 255, 0.1)';
+            ctx.shadowBlur = 8 * lensScale;
+            ctx.strokeStyle = 'rgba(255, 255, 255, 0.15)';
+            ctx.lineWidth = 1;
+            ctx.stroke();
+            ctx.shadowBlur = 0;
+
+            // Subtle inner vignette
+            const vignetteGradient = ctx.createRadialGradient(
+              node.x, node.y, scaledRadius * 0.6,
               node.x, node.y, scaledRadius
             );
-            gradient.addColorStop(0, 'rgba(255, 255, 255, 0.1)');
-            gradient.addColorStop(1, 'rgba(0, 0, 0, 0.3)');
-            ctx.fillStyle = gradient;
+            vignetteGradient.addColorStop(0, 'rgba(0, 0, 0, 0)');
+            vignetteGradient.addColorStop(1, 'rgba(0, 0, 0, 0.2)');
+            ctx.fillStyle = vignetteGradient;
             ctx.fill();
 
-            // Placeholder letter/logo (scale text size proportionally)
-            ctx.fillStyle = TEXT_COLOR;
-            const scaledFontSize = Math.round(18 * lensScale);
-            ctx.font = `bold ${scaledFontSize}px -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif`;
-            ctx.textAlign = 'center';
-            ctx.textBaseline = 'middle';
-            ctx.fillText(node.letter, node.x, node.y);
+            // Draw logo or fallback
+            const logoUrl = node.icon.logoUrl;
+            const logoStatus = imageLoadStatus.get(logoUrl);
+            const logoImage = imageCache.get(logoUrl);
+
+            if (logoStatus === 'loaded' && logoImage) {
+              // Clip to circle
+              ctx.save();
+              ctx.beginPath();
+              ctx.arc(node.x, node.y, scaledRadius * 0.75, 0, Math.PI * 2);
+              ctx.clip();
+
+              // Calculate contain-style fit with padding
+              const padding = scaledRadius * 0.15;
+              const availableSize = (scaledRadius * 0.75) * 2 - padding * 2;
+              const imgAspect = logoImage.width / logoImage.height;
+              let drawWidth, drawHeight;
+
+              if (imgAspect > 1) {
+                drawWidth = availableSize;
+                drawHeight = availableSize / imgAspect;
+              } else {
+                drawHeight = availableSize;
+                drawWidth = availableSize * imgAspect;
+              }
+
+              const drawX = node.x - drawWidth / 2;
+              const drawY = node.y - drawHeight / 2;
+
+              ctx.drawImage(logoImage, drawX, drawY, drawWidth, drawHeight);
+              ctx.restore();
+            } else {
+              // Fallback: draw first letter
+              ctx.fillStyle = TEXT_COLOR;
+              const scaledFontSize = Math.round(24 * lensScale);
+              ctx.font = `bold ${scaledFontSize}px -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif`;
+              ctx.textAlign = 'center';
+              ctx.textBaseline = 'middle';
+              ctx.fillText(node.icon.name[0], node.x, node.y);
+            }
           });
 
           ctx.restore();
         });
+      }
+
+      // Find node under screen coordinates (respecting camera, zoom, lens)
+      function findNodeAtScreenPos(screenX, screenY) {
+        const rect = canvas.getBoundingClientRect();
+        const camXWrapped = wrap(camX, WORLD_WIDTH);
+        const camYWrapped = wrap(camY, WORLD_HEIGHT);
+
+        let closestNode = null;
+        let closestDistance = Infinity;
+
+        // Check all tiles
+        const tileOffsets = [
+          { x: -WORLD_WIDTH, y: -WORLD_HEIGHT },
+          { x: -WORLD_WIDTH, y: 0 },
+          { x: -WORLD_WIDTH, y: WORLD_HEIGHT },
+          { x: 0, y: -WORLD_HEIGHT },
+          { x: 0, y: 0 },
+          { x: 0, y: WORLD_HEIGHT },
+          { x: WORLD_WIDTH, y: -WORLD_HEIGHT },
+          { x: WORLD_WIDTH, y: 0 },
+          { x: WORLD_WIDTH, y: WORLD_HEIGHT }
+        ];
+
+        tileOffsets.forEach(offset => {
+          nodes.forEach(node => {
+            const nodeScreenX = (node.x + offset.x) * zoom + camXWrapped + rect.width / 2;
+            const nodeScreenY = (node.y + offset.y) * zoom + camYWrapped + rect.height / 2;
+
+            // Calculate lens scale for this node
+            const dx = nodeScreenX - focusX;
+            const dy = nodeScreenY - focusY;
+            const distanceToFocus = Math.sqrt(dx * dx + dy * dy);
+            const strength = Math.max(0, 1 - distanceToFocus / LENS_RADIUS);
+            const lensScale = 1 + (LENS_MAX_SCALE - 1) * strength * strength;
+            const scaledRadius = NODE_RADIUS * lensScale * zoom;
+
+            const clickDx = screenX - nodeScreenX;
+            const clickDy = screenY - nodeScreenY;
+            const clickDistance = Math.sqrt(clickDx * clickDx + clickDy * clickDy);
+
+            if (clickDistance < scaledRadius && clickDistance < closestDistance) {
+              closestDistance = clickDistance;
+              closestNode = node;
+            }
+          });
+        });
+
+        return closestNode;
       }
 
       // Camera animation loop
@@ -359,6 +494,7 @@
         if (activePointers.size === 2) {
           // Two fingers: start pinch zoom
           isDragging = false;
+          hasDragged = false;
           canvas.classList.remove('dragging');
 
           const pointers = Array.from(activePointers.values());
@@ -370,6 +506,7 @@
         } else if (activePointers.size === 1) {
           // One finger: start drag pan
           isDragging = true;
+          hasDragged = false;
           dragStartX = e.clientX;
           dragStartY = e.clientY;
           dragStartCamX = targetCamX;
@@ -408,12 +545,31 @@
           const deltaX = e.clientX - dragStartX;
           const deltaY = e.clientY - dragStartY;
 
+          // Mark as dragged if moved more than 5 pixels
+          if (Math.abs(deltaX) > 5 || Math.abs(deltaY) > 5) {
+            hasDragged = true;
+          }
+
           targetCamX = dragStartCamX + deltaX;
           targetCamY = dragStartCamY + deltaY;
         }
       });
 
       canvas.addEventListener('pointerup', (e) => {
+        // Detect click (not drag)
+        if (isDragging && !hasDragged && activePointers.size === 1) {
+          const rect = canvas.getBoundingClientRect();
+          const clickX = e.clientX - rect.left;
+          const clickY = e.clientY - rect.top;
+
+          const clickedNode = findNodeAtScreenPos(clickX, clickY);
+
+          if (clickedNode && clickedNode.icon.href) {
+            // Open link
+            window.open(clickedNode.icon.href, '_blank');
+          }
+        }
+
         activePointers.delete(e.pointerId);
 
         if (activePointers.size < 2) {
@@ -422,6 +578,7 @@
 
         if (activePointers.size === 0) {
           isDragging = false;
+          hasDragged = false;
           canvas.classList.remove('dragging');
         }
 
@@ -489,6 +646,9 @@
         targetFocusY = rect.height / 2;
         focusX = targetFocusX;
         focusY = targetFocusY;
+
+        // Preload all icon images
+        preloadImages();
 
         generateCircularGrid(rect.width, rect.height);
         animate();
