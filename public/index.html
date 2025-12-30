@@ -33,8 +33,8 @@
       const ctx = canvas.getContext('2d');
 
       // Configuration
-      const NODE_RADIUS = 55;
-      const RING_SPACING = 130;
+      const NODE_RADIUS = 70;
+      const RING_SPACING = 160;
       const LINE_COLOR = 'rgba(80, 80, 80, 0.3)';
       const NODE_COLOR = '#1a1a1a';
       const NODE_STROKE = '#444';
@@ -180,9 +180,10 @@
 
       // Generate concentric circular layout
       function generateCircularGrid(viewportWidth, viewportHeight) {
-        // Calculate how many rings needed to fill viewport
-        const maxRadius = Math.sqrt(viewportWidth * viewportWidth + viewportHeight * viewportHeight) / 2;
-        const RING_COUNT = Math.ceil(maxRadius / RING_SPACING);
+        // Calculate how many rings needed to fill viewport (reduced for better performance)
+        // Use larger dimension instead of diagonal to avoid excessive corner nodes
+        const maxDimension = Math.max(viewportWidth, viewportHeight) / 2;
+        const RING_COUNT = Math.ceil(maxDimension / RING_SPACING) + 1;
 
         nodes = [];
         let nodeId = 0;
@@ -338,9 +339,13 @@
             const dy = screenY - focusY;
             const distance = Math.sqrt(dx * dx + dy * dy);
 
-            // Apply smooth falloff for lens magnification
-            const strength = Math.max(0, 1 - distance / LENS_RADIUS);
-            const lensScale = 1 + (LENS_MAX_SCALE - 1) * strength * strength;
+            // Skip expensive lens calculations if node is far from focus
+            let lensScale = 1;
+            if (distance <= LENS_RADIUS) {
+              // Apply smooth falloff for lens magnification
+              const strength = Math.max(0, 1 - distance / LENS_RADIUS);
+              lensScale = 1 + (LENS_MAX_SCALE - 1) * strength * strength;
+            }
 
             // Apply magnification transform
             const scaledRadius = NODE_RADIUS * lensScale;
@@ -355,10 +360,10 @@
             ctx.fill();
             ctx.stroke();
 
-            // Subtle outer glow
-            ctx.shadowColor = 'rgba(255, 255, 255, 0.1)';
-            ctx.shadowBlur = 8 * lensScale;
-            ctx.strokeStyle = 'rgba(255, 255, 255, 0.15)';
+            // Subtle outer glow (reduced for performance)
+            ctx.shadowColor = 'rgba(255, 255, 255, 0.08)';
+            ctx.shadowBlur = 4 * lensScale;
+            ctx.strokeStyle = 'rgba(255, 255, 255, 0.12)';
             ctx.lineWidth = 1;
             ctx.stroke();
             ctx.shadowBlur = 0;
